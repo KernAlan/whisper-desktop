@@ -82,13 +82,6 @@ function createWindow() {
   });
 
   mainWindow.webContents.on(
-    "console-message",
-    (event, level, message, line, sourceId) => {
-      console.log("Renderer Console:", message);
-    }
-  );
-
-  mainWindow.webContents.on(
     "did-fail-load",
     (event, errorCode, errorDescription) => {
       console.error("Failed to load:", errorCode, errorDescription);

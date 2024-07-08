@@ -32,6 +32,8 @@ Whisper Desktop is an Electron-based application that allows users to transcribe
    GROQ_API_KEY=your_api_key_here
    ```
 
+   To obtain your Groq API key, visit [https://console.groq.com/keys](https://console.groq.com/keys).
+
 ## Usage
 
 1. Start the application:
@@ -40,10 +42,29 @@ Whisper Desktop is an Electron-based application that allows users to transcribe
    npm start
    ```
 
-2. Press `Ctrl+Shift+Space` to start recording
+2. Press `Ctrl+Shift+Space` (or `Cmd+Shift+Space` on macOS) to start recording
 3. Speak into your microphone
 4. Press `Ctrl+Shift+Space` again to stop recording and initiate transcription
 5. The transcribed text will be automatically inserted into the active text input field
+
+### Platform-Specific Notes
+
+#### macOS
+- You may need to grant permission for the app to access your microphone. If prompted, allow microphone access in System Preferences > Security & Privacy > Privacy > Microphone.
+
+#### Linux
+- Ensure you have the necessary audio libraries installed. On Ubuntu or Debian-based systems, you might need to run:
+
+   ```
+   sudo apt-get install libasound2-dev
+   ```
+
+- If you encounter issues with global shortcuts, you may need to install `libxtst-dev`:
+
+   ```
+   sudo apt-get install libxtst-dev
+   ```
+
 
 ## Development
 
@@ -62,3 +83,25 @@ To modify the application:
 ## Building
 
 To build the application for distribution:
+
+   ```
+   npm run build
+   ```
+
+This will create distributable packages for your platform in the `dist` folder.
+
+## Testing
+
+The application includes a microphone testing feature. Click the "Test Microphone" button in the UI to check if your microphone is working correctly.
+
+## Troubleshooting
+
+If you encounter any issues with audio recording or transcription:
+
+1. Ensure your microphone is properly connected and selected as the default input device
+2. Check the console logs for any error messages
+3. Verify that your Groq API key is correctly set in the `.env` file
+
+## License
+
+This project is licensed under the Apache License 2.0. See the LICENSE file for details.

@@ -2,6 +2,8 @@
 
 Whisper Desktop is an Electron-based application that allows users to transcribe speech to text using OpenAI's Whisper model through the Groq API. It provides a simple interface for recording audio and automatically transcribing it into text, which can then be inserted into any active text input field.
 
+![image](https://github.com/KernAlan/whisper-desktop/assets/63753020/9e041208-4480-4f40-96b3-bc4425956f7e)
+
 ## Features
 
 - Global hotkey (Ctrl+Shift+Space) to start/stop recording

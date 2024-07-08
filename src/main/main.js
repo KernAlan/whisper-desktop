@@ -124,43 +124,6 @@ function createWindow() {
   );
 }
 
-async function transcribeAudioStream(audioChunks) {
-  try {
-    const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-
-    // Create a temporary file
-
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "whisper-"));
-
-    const tempFilePath = path.join(tempDir, "temp_audio.webm");
-
-    // Write audio data to the temporary file
-
-    await fs.writeFile(tempFilePath, Buffer.concat(audioChunks));
-
-    // Create a read stream from the temporary file
-
-    const fileStream = fs.createReadStream(tempFilePath);
-
-    const response = await groq.audio.transcriptions.create({
-      file: fileStream,
-
-      model: "whisper-large-v3",
-    });
-
-    // Clean up the temporary file and directory
-
-    await fs.unlink(tempFilePath);
-
-    await fs.rmdir(tempDir);
-
-    return response.text;
-  } catch (error) {
-    console.error("Transcription error:", error);
-
-    return null;
-  }
-}
 function createApplicationMenu() {
   const template = [
     {
@@ -233,6 +196,7 @@ app.on("activate", () => {
     createWindow();
   }
 });
+
 ipcMain.handle("transcribe-audio", async (event, arrayBuffer) => {
   try {
     console.log(

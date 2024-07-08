@@ -52,11 +52,6 @@ function createWindow() {
 
   mainWindow.loadFile(path.join(__dirname, "..", "..", "index.html"));
 
-  mainWindow.webContents.on("did-finish-load", () => {
-    console.log("Window loaded, sending test message");
-    mainWindow.webContents.send("test-message", "Hello from main process");
-  });
-
   mainWindow.webContents.on(
     "console-message",
     (event, level, message, line, sourceId) => {
@@ -68,15 +63,6 @@ function createWindow() {
     "did-fail-load",
     (event, errorCode, errorDescription) => {
       console.error("Failed to load:", errorCode, errorDescription);
-    }
-  );
-
-  mainWindow.webContents.session.setPermissionCheckHandler(
-    (webContents, permission, requestingOrigin, details) => {
-      if (permission === "media") {
-        return true;
-      }
-      return false;
     }
   );
 

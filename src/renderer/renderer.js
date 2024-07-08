@@ -66,23 +66,6 @@ async function handleRecordingStop() {
   }
 }
 
-function simulateTyping(text) {
-  const activeElement = document.activeElement;
-  if (
-    activeElement &&
-    (activeElement.tagName === "INPUT" || activeElement.tagName === "TEXTAREA")
-  ) {
-    const event = new InputEvent("input", {
-      inputType: "insertText",
-      data: text,
-      bubbles: true,
-      cancelable: true,
-    });
-    activeElement.value += text;
-    activeElement.dispatchEvent(event);
-  }
-}
-
 console.log("Setting up onToggleRecording in renderer");
 window.electronAPI.onToggleRecording(() => {
   console.log("onToggleRecording callback triggered in renderer");

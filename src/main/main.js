@@ -5,6 +5,7 @@ const {
   globalShortcut,
   Menu,
   clipboard,
+  screen,
 } = require("electron");
 const path = require("path");
 const fs = require("fs-extra");
@@ -20,9 +21,13 @@ function createWindow() {
   console.log("Preload script path:", preloadPath);
 
   mainWindow = new BrowserWindow({
-    width: 800,
-    height: 600,
-    show: true,
+    width: 300,
+    height: 180,
+    show: false,
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,
+    skipTaskbar: true,
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,
@@ -59,26 +64,9 @@ function createWindow() {
     }
   );
 
-  mainWindow.webContents.on(
-    "did-fail-load",
-    (event, errorCode, errorDescription) => {
-      console.error("Failed to load:", errorCode, errorDescription);
-    }
-  );
-
-  mainWindow.webContents.session.setPermissionRequestHandler(
-    (webContents, permission, callback) => {
-      if (permission === "media") {
-        callback(true);
-      } else {
-        callback(false);
-      }
-    }
-  );
-
   mainWindow.webContents.on("did-finish-load", () => {
-    console.log("Window loaded, sending test message");
-    mainWindow.webContents.send("test-message", "Hello from main process");
+    console.log("Window loaded, setting up global shortcut");
+    setupGlobalShortcut();
   });
 
   mainWindow.webContents.on(
@@ -87,19 +75,32 @@ function createWindow() {
       console.error("Failed to load:", errorCode, errorDescription);
     }
   );
+}
 
-  mainWindow.webContents.on(
-    "did-fail-load",
-    (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
-      console.error(
-        "Failed to load:",
-        errorCode,
-        errorDescription,
-        validatedURL,
-        isMainFrame
-      );
-    }
-  );
+function showWindow() {
+  if (mainWindow) {
+    // Get the position of the primary display
+    const { workArea } = screen.getPrimaryDisplay();
+
+    // Position the window in the bottom right corner
+    mainWindow.setPosition(
+      workArea.x + workArea.width - 320,
+      workArea.y + workArea.height - 200
+    );
+
+    mainWindow.showInactive(); // Show without focusing
+
+    // Automatically hide after 5 seconds (adjust as needed)
+    setTimeout(() => {
+      hideWindow();
+    }, 5000);
+  }
+}
+
+function hideWindow() {
+  if (mainWindow) {
+    mainWindow.hide();
+  }
 }
 
 function createApplicationMenu() {
@@ -118,16 +119,10 @@ function createApplicationMenu() {
   Menu.setApplicationMenu(menu);
 }
 
-app.on("ready", () => {
-  app.setLoginItemSettings({
-    openAtLogin: true,
-    openAsHidden: true,
-  });
-  createWindow();
-  createApplicationMenu();
-
+function setupGlobalShortcut() {
   globalShortcut.register("CommandOrControl+Shift+Space", () => {
     console.log("Shortcut triggered in main process");
+    showWindow();
     const windows = BrowserWindow.getAllWindows();
     console.log(`Sending toggle-recording event to ${windows.length} windows`);
     windows.forEach((window, index) => {
@@ -135,6 +130,15 @@ app.on("ready", () => {
       console.log(`toggle-recording event sent to window ${index + 1}`);
     });
   });
+}
+
+app.on("ready", () => {
+  app.setLoginItemSettings({
+    openAtLogin: true,
+    openAsHidden: true,
+  });
+  createWindow();
+  createApplicationMenu();
 });
 
 async function checkAndRequestMicrophonePermission() {
@@ -239,6 +243,7 @@ ipcMain.handle("simulate-typing", async (event, text) => {
     return false;
   }
 });
+
 ipcMain.handle("request-microphone-access", async () => {
   const hasAccess = await checkAndRequestMicrophonePermission();
   if (hasAccess) {
@@ -246,4 +251,8 @@ ipcMain.handle("request-microphone-access", async () => {
   } else {
     throw new Error("Microphone access not granted");
   }
+});
+
+ipcMain.handle("hide-window", () => {
+  hideWindow();
 });

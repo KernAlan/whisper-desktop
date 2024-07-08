@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     console.log("ArrayBuffer size in preload:", arrayBuffer.byteLength);
     return ipcRenderer.invoke("transcribe-audio", arrayBuffer);
   },
+  hideWindow: () => ipcRenderer.invoke("hide-window"),
   simulateTyping: (text) => ipcRenderer.invoke("simulate-typing", text),
   requestMicrophoneAccess: () =>
     ipcRenderer.invoke("request-microphone-access"),

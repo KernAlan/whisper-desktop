@@ -1,14 +1,60 @@
 <!DOCTYPE html>
 <html>
     <head>
-        <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'">
         <title>Whisper Desktop</title>
+        <style>
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+                background-color: rgba(255, 255, 255, 0.8);
+                color: #333;
+                margin: 0;
+                padding: 20px;
+                border-radius: 10px;
+                box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+                backdrop-filter: blur(10px);
+                -webkit-backdrop-filter: blur(10px);
+                user-select: none;
+                -webkit-user-select: none;
+                -webkit-app-region: drag;
+            }
+            h1 {
+                font-size: 18px;
+                margin-bottom: 10px;
+            }
+            p {
+                font-size: 12px;
+                color: #666;
+                margin-bottom: 15px;
+            }
+            #status {
+                font-size: 14px;
+                font-weight: bold;
+                margin-bottom: 15px;
+            }
+            #testMicButton {
+                background-color: #007AFF;
+                color: white;
+                border: none;
+                padding: 8px 12px;
+                border-radius: 5px;
+                font-size: 12px;
+                cursor: pointer;
+                transition: background-color 0.3s;
+                -webkit-app-region: no-drag;
+            }
+            #testMicButton:hover {
+                background-color: #0056b3;
+            }
+            input {
+                display: none;
+            }
+        </style>
     </head>
 <body>
     <h1>Whisper Desktop</h1>
-    <p>Press CTRL + SHIFT + SPACE to start/stop recording</p>
-    <p id="status">Not recording</p>
-    <input type="text" placeholder="Type or speak here">
+    <p>Press ⌘ + ⇧ + Space to start/stop recording</p>
+    <div id="status">Ready</div>
     <script src="./src/renderer/init.js"></script>
 </body>
 </html>

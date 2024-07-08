@@ -1,0 +1,26 @@
+{
+  "name": "whisper-desktop",
+  "version": "1.0.0",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "electron": "^31.1.0",
+    "form-data": "^4.0.0",
+    "fs-extra": "^11.2.0",
+    "groq-sdk": "^0.5.0",
+    "isomorphic-fetch": "^3.0.0",
+    "node-key-sender": "^1.0.11"
+  },
+  "devDependencies": {
+    "electron-builder": "^24.13.3"
+  }
+}

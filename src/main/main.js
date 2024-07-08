@@ -12,7 +12,6 @@ const os = require("os");
 require("dotenv").config();
 const Groq = require("groq-sdk");
 const ks = require("node-key-sender");
-const WebSocket = require("ws");
 
 let mainWindow;
 

@@ -98,6 +98,7 @@ If you encounter any issues with audio recording or transcription:
 1. Ensure your microphone is properly connected and selected as the default input device
 2. Check the console logs for any error messages
 3. Verify that your Groq API key is correctly set in the `.env` file
+4. You may need to install Java if you don't already have it installed: https://www.java.com/download/ie_manual.jsp
 
 ## Roadmap
 

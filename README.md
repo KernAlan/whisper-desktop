@@ -4,6 +4,8 @@ Whisper Desktop is an Electron-based application that allows users to transcribe
 
 ![image](https://github.com/KernAlan/whisper-desktop/assets/63753020/9e041208-4480-4f40-96b3-bc4425956f7e)
 
+Tl;dr With the magic that is Whisper and the speed of the Groq servers, I thought I'd spend a weekend to make a tool to help me speak globally into my computer. 
+
 ## Features
 
 - Global hotkey (Ctrl+Shift+Space) to start/stop recording
@@ -65,7 +67,6 @@ Whisper Desktop is an Electron-based application that allows users to transcribe
    sudo apt-get install libxtst-dev
    ```
 
-
 ## Development
 
 The main components of the application are:
@@ -90,10 +91,6 @@ To build the application for distribution:
 
 This will create distributable packages for your platform in the `dist` folder.
 
-## Testing
-
-The application includes a microphone testing feature. Click the "Test Microphone" button in the UI to check if your microphone is working correctly.
-
 ## Troubleshooting
 
 If you encounter any issues with audio recording or transcription:
@@ -101,6 +98,19 @@ If you encounter any issues with audio recording or transcription:
 1. Ensure your microphone is properly connected and selected as the default input device
 2. Check the console logs for any error messages
 3. Verify that your Groq API key is correctly set in the `.env` file
+
+## Roadmap
+
+The following are ideas for future development:
+
+- Allow for using different providers (e.g. OpenAI or self-host)
+- Include post-processing capability using LLM providers
+- Make the UI more customizable
+- Add a feature to save and manage transcription history
+- Develop a mobile companion app for remote control and syncing
+- Implement advanced audio processing for noise reduction and speaker separation
+
+This was done in a weekend, so I don't have any specific plans to implement any of these yet.
 
 ## License
 

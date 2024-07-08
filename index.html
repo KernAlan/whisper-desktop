@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
     <head>
-        <meta charset="UTF-8">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'">
         <title>Whisper Desktop</title>
     </head>
 <body>
@@ -9,6 +9,6 @@
     <p>Press CTRL + SHIFT + SPACE to start/stop recording</p>
     <p id="status">Not recording</p>
     <input type="text" placeholder="Type or speak here">
-    <script src="init.js"></script>
+    <script src="./src/renderer/init.js"></script>
 </body>
 </html>

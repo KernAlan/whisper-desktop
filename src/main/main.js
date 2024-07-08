@@ -90,6 +90,38 @@ function createWindow() {
       }
     }
   );
+
+  mainWindow.webContents.on("did-finish-load", () => {
+    console.log("Window loaded, sending test message");
+    mainWindow.webContents.send("test-message", "Hello from main process");
+  });
+
+  mainWindow.webContents.on(
+    "console-message",
+    (event, level, message, line, sourceId) => {
+      console.log("Renderer Console:", message);
+    }
+  );
+
+  mainWindow.webContents.on(
+    "did-fail-load",
+    (event, errorCode, errorDescription) => {
+      console.error("Failed to load:", errorCode, errorDescription);
+    }
+  );
+
+  mainWindow.webContents.on(
+    "did-fail-load",
+    (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      console.error(
+        "Failed to load:",
+        errorCode,
+        errorDescription,
+        validatedURL,
+        isMainFrame
+      );
+    }
+  );
 }
 
 async function transcribeAudioStream(audioChunks) {
@@ -155,12 +187,12 @@ app.on("ready", () => {
 
   globalShortcut.register("CommandOrControl+Shift+Space", () => {
     console.log("Shortcut triggered in main process");
-    if (mainWindow && mainWindow.webContents) {
-      mainWindow.webContents.send("toggle-recording");
-      console.log("toggle-recording event sent to renderer");
-    } else {
-      console.log("mainWindow or webContents not available");
-    }
+    const windows = BrowserWindow.getAllWindows();
+    console.log(`Sending toggle-recording event to ${windows.length} windows`);
+    windows.forEach((window, index) => {
+      window.webContents.send("toggle-recording");
+      console.log(`toggle-recording event sent to window ${index + 1}`);
+    });
   });
 });
 

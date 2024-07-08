@@ -5,8 +5,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.on("test-message", (_, message) => callback(message)),
   onToggleRecording: (callback) => {
     console.log("Setting up onToggleRecording in preload");
-    ipcRenderer.on("toggle-recording", () => {
-      console.log("toggle-recording event received in preload");
+    ipcRenderer.on("toggle-recording", (event) => {
+      console.log("toggle-recording event received in preload", event);
       callback();
     });
   },

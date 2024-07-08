@@ -83,16 +83,22 @@ function simulateTyping(text) {
   }
 }
 
+console.log("Setting up onToggleRecording in renderer");
 window.electronAPI.onToggleRecording(() => {
   console.log("onToggleRecording callback triggered in renderer");
   if (isRecording) {
+    console.log("Stopping recording");
     if (!stopRecording()) {
+      console.log("Failed to stop recording, starting new recording");
       startRecording();
     }
   } else {
+    console.log("Starting recording");
     startRecording();
   }
 });
+
+console.log("Renderer script fully loaded");
 
 window.electronAPI.onTranscriptionResult((result) => {
   console.log("Transcription result:", result);

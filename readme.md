@@ -13,12 +13,14 @@ Whisper Desktop is an Electron-based application that allows users to transcribe
 ## Installation
 
 1. Clone the repository:
+
    ```
    git clone https://github.com/yourusername/whisper-desktop.git
    cd whisper-desktop
    ```
 
 2. Install dependencies:
+
    ```
    npm install
    ```
@@ -31,6 +33,7 @@ Whisper Desktop is an Electron-based application that allows users to transcribe
 ## Usage
 
 1. Start the application:
+
    ```
    npm start
    ```

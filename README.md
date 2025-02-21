@@ -19,7 +19,7 @@ Tl;dr With the magic that is Whisper and the speed of the Groq servers, I though
 1. Clone the repository:
 
    ```
-   git clone https://github.com/yourusername/whisper-desktop.git
+   git clone https://github.com/kernalan/whisper-desktop.git
    cd whisper-desktop
    ```
 

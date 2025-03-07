@@ -6,6 +6,7 @@ const {
   Menu,
   clipboard,
   screen,
+  systemPreferences,
 } = require("electron");
 const path = require("path");
 const fs = require("fs-extra");

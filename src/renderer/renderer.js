@@ -155,13 +155,25 @@ async function handleRecordingStop() {
 
     if (response && typeof response === "string" && response.length > 0) {
       updateStatus("Simulating typing...", "green");
-      const success = await window.electronAPI.simulateTyping(response);
-      if (success) {
+      const typingResult = await window.electronAPI.simulateTyping(response);
+      if (typingResult && typingResult.success) {
         console.log("Typing simulated successfully");
         updateStatus("Done", "green");
+      } else if (typingResult && typingResult.reason === "mac-accessibility") {
+        console.warn(
+          "macOS accessibility permission missing, cannot simulate typing"
+        );
+        updateStatus(
+          "Enable accessibility access for Whisper Desktop in System Settings > Privacy & Security > Accessibility",
+          "red"
+        );
       } else {
-        console.error("Failed to simulate typing");
-        updateStatus("Failed to simulate typing", "red");
+        const errorMessage =
+          typingResult && typingResult.error
+            ? `Failed to simulate typing (${typingResult.error})`
+            : "Failed to simulate typing";
+        console.error(errorMessage);
+        updateStatus(errorMessage, "red");
       }
     } else {
       console.warn(

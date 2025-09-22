@@ -11,11 +11,52 @@ const {
 const path = require("path");
 const fs = require("fs-extra");
 const os = require("os");
+const { execFile } = require("child_process");
 require("dotenv").config();
 const Groq = require("groq-sdk");
 const ks = require("node-key-sender");
 
 let mainWindow;
+let hasPromptedForAccessibility = false;
+
+function ensureMacAccessibilityPermission() {
+  if (process.platform !== "darwin") {
+    return true;
+  }
+
+  const isTrusted = systemPreferences.isTrustedAccessibilityClient(false);
+  if (isTrusted) {
+    return true;
+  }
+
+  if (!hasPromptedForAccessibility) {
+    hasPromptedForAccessibility = true;
+    try {
+      systemPreferences.isTrustedAccessibilityClient(true);
+    } catch (error) {
+      console.error(
+        "Failed to prompt for macOS accessibility permission:",
+        error
+      );
+    }
+  }
+
+  return false;
+}
+
+function runMacPasteShortcut() {
+  return new Promise((resolve, reject) => {
+    const script =
+      'tell application "System Events" to keystroke "v" using {command down}';
+    execFile("/usr/bin/osascript", ["-e", script], (error) => {
+      if (error) {
+        reject(error);
+      } else {
+        resolve();
+      }
+    });
+  });
+}
 
 function createWindow() {
   const preloadPath = path.join(__dirname, "..", "preload", "preload.js");
@@ -225,23 +266,35 @@ ipcMain.handle("transcribe-audio", async (event, arrayBuffer) => {
 
 ipcMain.handle("simulate-typing", async (event, text) => {
   try {
+    if (!ensureMacAccessibilityPermission()) {
+      console.warn(
+        "macOS accessibility permission is required to simulate typing."
+      );
+      return { success: false, reason: "mac-accessibility" };
+    }
+
     // Save the current clipboard content
     const originalClipboard = clipboard.readText();
 
-    // Copy the new text to clipboard
-    clipboard.writeText(text);
+    try {
+      // Copy the new text to clipboard
+      clipboard.writeText(text);
 
-    // Simulate Ctrl+V (or Cmd+V on macOS) to paste
-    const modifier = process.platform === "darwin" ? "command" : "control";
-    await ks.sendCombination([modifier, "v"]);
+      if (process.platform === "darwin") {
+        await runMacPasteShortcut();
+      } else {
+        const modifier = "control";
+        await ks.sendCombination([modifier, "v"]);
+      }
 
-    // Restore the original clipboard content
-    clipboard.writeText(originalClipboard);
-
-    return true;
+      return { success: true };
+    } finally {
+      // Restore the original clipboard content
+      clipboard.writeText(originalClipboard);
+    }
   } catch (error) {
     console.error("Error simulating typing:", error);
-    return false;
+    return { success: false, reason: "error", error: error.message };
   }
 });
 

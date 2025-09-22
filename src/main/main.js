@@ -16,6 +16,8 @@ require("dotenv").config();
 const Groq = require("groq-sdk");
 const ks = require("node-key-sender");
 
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 let mainWindow;
 let hasPromptedForAccessibility = false;
 
@@ -289,6 +291,8 @@ ipcMain.handle("simulate-typing", async (event, text) => {
 
       return { success: true };
     } finally {
+      // Allow time for the target app to consume the clipboard contents before restoring
+      await delay(300);
       // Restore the original clipboard content
       clipboard.writeText(originalClipboard);
     }

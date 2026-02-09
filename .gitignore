@@ -1,0 +1,6 @@
+.env
+node_modules/
+logs/
+app.pid
+run.out.log
+run.err.log

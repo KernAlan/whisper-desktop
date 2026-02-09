@@ -5,6 +5,8 @@ export class RecorderController {
     audioEngine,
     minRecordingDurationMs,
     mediaRecorderTimesliceMs,
+    hideWindow,
+    focusRestoreDelayMs = 120,
     requestMicrophoneAccess,
     transcribeAudio,
     simulateTyping,
@@ -14,6 +16,8 @@ export class RecorderController {
     this.audioEngine = audioEngine;
     this.minRecordingDurationMs = minRecordingDurationMs;
     this.mediaRecorderTimesliceMs = mediaRecorderTimesliceMs;
+    this.hideWindow = typeof hideWindow === "function" ? hideWindow : null;
+    this.focusRestoreDelayMs = focusRestoreDelayMs;
     this.requestMicrophoneAccess = requestMicrophoneAccess;
     this.transcribeAudio = transcribeAudio;
     this.simulateTyping = simulateTyping;
@@ -137,6 +141,14 @@ export class RecorderController {
 
       this.stateMachine.transition(STATES.PASTING, "Injecting text");
       this.updateStatus("Inserting text...", "green");
+      if (this.hideWindow) {
+        try {
+          await this.hideWindow();
+          await new Promise((resolve) => setTimeout(resolve, this.focusRestoreDelayMs));
+        } catch (_error) {
+          // Ignore hide/focus handoff failures and still attempt paste.
+        }
+      }
       const pasteResult = await this.simulateTyping(transcript);
       const ok = typeof pasteResult === "boolean" ? pasteResult : !!pasteResult?.ok;
       pasteMs = Number(pasteResult?.pasteMs || 0);

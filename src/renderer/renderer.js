@@ -162,6 +162,7 @@ async function testMicrophone() {
 
 async function boot() {
   const runtimeConfig = await window.electronAPI.getRuntimeConfig();
+  const isMac = navigator.platform.toLowerCase().includes("mac");
   renderRuntimeConfig(runtimeConfig);
 
   const audioEngine = new AudioEngine({
@@ -174,6 +175,8 @@ async function boot() {
     audioEngine,
     minRecordingDurationMs: MIN_RECORDING_DURATION_MS,
     mediaRecorderTimesliceMs: runtimeConfig.recorderTimesliceMs || 150,
+    hideWindow: () => window.electronAPI.hideWindow(),
+    focusRestoreDelayMs: isMac ? 180 : 60,
     requestMicrophoneAccess: () => window.electronAPI.requestMicrophoneAccess(),
     transcribeAudio: (arrayBuffer) => window.electronAPI.transcribeAudio(arrayBuffer),
     simulateTyping: (text) => window.electronAPI.simulateTyping(text),

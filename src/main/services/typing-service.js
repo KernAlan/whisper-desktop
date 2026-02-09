@@ -1,5 +1,8 @@
 const { clipboard } = require("electron");
+const { execFile } = require("node:child_process");
+const { promisify } = require("node:util");
 const ks = require("node-key-sender");
+const execFileAsync = promisify(execFile);
 
 class TypingService {
   constructor({ logger, restoreMode = "deferred", restoreDelayMs = 120 }) {
@@ -47,8 +50,14 @@ class TypingService {
       }));
 
       clipboard.writeText(text);
-      const modifier = process.platform === "darwin" ? "meta" : "control";
-      await ks.sendCombination([modifier, "v"]);
+      if (process.platform === "darwin") {
+        await execFileAsync("osascript", [
+          "-e",
+          'tell application "System Events" to keystroke "v" using command down',
+        ]);
+      } else {
+        await ks.sendCombination(["control", "v"]);
+      }
       pasteMs = Date.now() - startedAt;
 
       if (this.restoreMode === "blocking") {

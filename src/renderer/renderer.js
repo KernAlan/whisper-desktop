@@ -175,7 +175,7 @@ async function boot() {
     audioEngine,
     minRecordingDurationMs: MIN_RECORDING_DURATION_MS,
     mediaRecorderTimesliceMs: runtimeConfig.recorderTimesliceMs || 150,
-    hideWindow: () => window.electronAPI.hideWindow(),
+    hideWindow: isMac ? () => window.electronAPI.hideWindow() : null,
     focusRestoreDelayMs: isMac ? 180 : 60,
     requestMicrophoneAccess: () => window.electronAPI.requestMicrophoneAccess(),
     transcribeAudio: (arrayBuffer) => window.electronAPI.transcribeAudio(arrayBuffer),

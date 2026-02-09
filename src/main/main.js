@@ -73,7 +73,11 @@ function createAndWireMainWindow() {
     logger.error("Failed to load window:", code, description);
   });
   mainWindow.webContents.on("console-message", (_event, _level, message) => {
-    logger.log("Renderer Console:", message);
+    if (typeof message !== "string") return;
+    if (message.includes("DOM fully loaded and parsed")) return;
+    if (message.includes("Renderer script loaded")) return;
+    if (message.includes("electronAPI.onToggleRecording is available")) return;
+    logger.log(`[UI] ${message}`);
   });
   return mainWindow;
 }
@@ -104,8 +108,10 @@ async function checkAndRequestMicrophonePermission() {
 }
 
 app.on("ready", () => {
-  diagnostics.printStartup();
-  logger.log(`Log file: ${logger.getCurrentLogPath()}`);
+  diagnostics.printStartup({
+    logFilePath: logger.getCurrentLogPath(),
+    appVersion: app.getVersion(),
+  });
   if (configIssues.length) {
     configIssues.forEach((issue) => logger.warn(`[Config] ${issue}`));
   }

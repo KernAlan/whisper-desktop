@@ -190,10 +190,14 @@ async function boot() {
 
   const audioDevices = await listAudioDevices().catch(() => []);
   if (audioDevices.length) {
-    console.log(
-      "Available audio input devices:",
-      audioDevices.map((d) => ({ id: d.deviceId, label: d.label }))
+    const compactDevices = audioDevices.map((d) =>
+      (d.label || d.deviceId || "unlabeled").slice(0, 40)
     );
+    sendDiagnostics({
+      type: "audio-devices",
+      count: audioDevices.length,
+      devices: compactDevices,
+    });
   }
   await refreshMicSourceOptions();
 

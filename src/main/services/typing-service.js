@@ -47,7 +47,7 @@ class TypingService {
       }));
 
       clipboard.writeText(text);
-      const modifier = process.platform === "darwin" ? "command" : "control";
+      const modifier = process.platform === "darwin" ? "meta" : "control";
       await ks.sendCombination([modifier, "v"]);
       pasteMs = Date.now() - startedAt;
 

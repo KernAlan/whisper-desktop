@@ -151,6 +151,21 @@ ipcMain.handle("transcribe-audio", async (_event, arrayBuffer) => {
 });
 
 ipcMain.handle("simulate-typing", async (_event, text) => {
+  if (process.platform === "darwin") {
+    try {
+      const trusted = systemPreferences.isTrustedAccessibilityClient(true);
+      if (!trusted) {
+        logger.warn("Accessibility permission is not granted; cannot simulate Cmd+V.");
+        return {
+          ok: false,
+          error: "accessibility-not-trusted",
+        };
+      }
+    } catch (error) {
+      logger.error("Failed to check accessibility permission:", error);
+    }
+  }
+
   return typingService.pasteText(text);
 });
 

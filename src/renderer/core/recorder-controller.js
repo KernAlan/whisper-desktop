@@ -146,6 +146,9 @@ export class RecorderController {
         this.updateStatus("Done", "green");
         this.stateMachine.transition(STATES.IDLE, "Done");
       } else {
+        if (pasteResult?.error === "accessibility-not-trusted") {
+          this.updateStatus("Enable Accessibility permission for Whisper Desktop", "red");
+        }
         this.stateMachine.transition(STATES.ERROR, "Failed to insert text");
       }
     } catch (error) {

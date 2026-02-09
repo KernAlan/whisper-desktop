@@ -33,6 +33,15 @@ class TranscriptionService {
     this.queue = [];
   }
 
+  setModels({ model, fallbackModel }) {
+    if (typeof model === "string" && model.trim()) {
+      this.model = model.trim();
+    }
+    if (typeof fallbackModel === "string" && fallbackModel.trim()) {
+      this.fallbackModel = fallbackModel.trim();
+    }
+  }
+
   async transcribe(arrayBuffer) {
     if (this.queue.length >= this.maxQueue) {
       throw new Error("Transcription queue is full. Please try again.");

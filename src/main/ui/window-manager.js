@@ -11,7 +11,7 @@ class WindowManager {
     const preloadPath = path.join(__dirname, "..", "..", "preload", "preload.js");
     this.mainWindow = new BrowserWindow({
       width: 360,
-      height: 230,
+      height: 420,
       show: false,
       frame: false,
       transparent: true,

@@ -8,6 +8,13 @@ class TypingService {
     this.restoreDelayMs = restoreDelayMs;
   }
 
+  setRestoreConfig({ restoreMode, restoreDelayMs }) {
+    if (restoreMode) this.restoreMode = restoreMode;
+    if (Number.isFinite(restoreDelayMs) && restoreDelayMs > 0) {
+      this.restoreDelayMs = restoreDelayMs;
+    }
+  }
+
   async pasteText(text) {
     let clipboardSnapshot = null;
     const startedAt = Date.now();

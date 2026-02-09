@@ -10,5 +10,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   requestMicrophoneAccess: () =>
     ipcRenderer.invoke("request-microphone-access"),
   getRuntimeConfig: () => ipcRenderer.invoke("get-runtime-config"),
+  updateRuntimeSettings: (settings) => ipcRenderer.invoke("update-runtime-settings", settings),
   sendDiagnostics: (payload) => ipcRenderer.send("renderer-diagnostics", payload),
 });

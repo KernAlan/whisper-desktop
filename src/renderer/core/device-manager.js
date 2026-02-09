@@ -63,5 +63,6 @@ export async function listAudioDevices() {
 }
 
 export {
+  getPreferredDeviceId,
   setPreferredDeviceId,
 };

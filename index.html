@@ -66,8 +66,51 @@
                 color: #444;
                 margin-bottom: 10px;
             }
-            input {
-                display: none;
+            #settingsPanel {
+                margin-top: 12px;
+                padding-top: 10px;
+                border-top: 1px solid rgba(0, 0, 0, 0.12);
+                -webkit-app-region: no-drag;
+            }
+            #settingsPanel summary {
+                cursor: pointer;
+                font-size: 12px;
+                font-weight: 600;
+                margin-bottom: 8px;
+            }
+            .settingRow {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                margin-bottom: 8px;
+            }
+            .settingRow label {
+                width: 86px;
+                font-size: 11px;
+                color: #555;
+            }
+            .settingRow select,
+            .settingRow input,
+            .settingRow button {
+                font-size: 11px;
+                padding: 5px 7px;
+            }
+            .settingRow select,
+            .settingRow input {
+                flex: 1;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                background: #fff;
+            }
+            #applyHotkeyButton, #applyProfileButton {
+                border: none;
+                border-radius: 4px;
+                color: #fff;
+                background: #4e6ef2;
+                cursor: pointer;
+            }
+            #applyHotkeyButton:hover, #applyProfileButton:hover {
+                background: #3754c4;
             }
         </style>
     </head>
@@ -78,6 +121,42 @@
     <div id="runtimeInfo">Loading runtime config...</div>
     <button id="testMicButton">Test Microphone</button>
     <button id="refreshMicButton">Refresh Mic</button>
+    <details id="settingsPanel">
+      <summary>Settings</summary>
+      <div class="settingRow">
+        <label for="injectionModeSelect">Injection</label>
+        <select id="injectionModeSelect">
+          <option value="deferred">Deferred Restore</option>
+          <option value="blocking">Blocking Restore</option>
+          <option value="off">Fast Paste (No Restore)</option>
+        </select>
+      </div>
+      <div class="settingRow">
+        <label for="micSourceSelect">Mic Source</label>
+        <select id="micSourceSelect"></select>
+      </div>
+      <div class="settingRow">
+        <label for="hotkeyInput">Hotkey</label>
+        <input id="hotkeyInput" type="text" placeholder="CommandOrControl+Shift+Space" />
+        <button id="applyHotkeyButton">Apply</button>
+      </div>
+      <div class="settingRow">
+        <label for="profileSelect">Profile</label>
+        <select id="profileSelect">
+          <option value="fast">Fast</option>
+          <option value="balanced">Balanced</option>
+          <option value="custom">Custom</option>
+        </select>
+      </div>
+      <div class="settingRow">
+        <label for="modelSelect">Model</label>
+        <select id="modelSelect">
+          <option value="whisper-large-v3-turbo">whisper-large-v3-turbo</option>
+          <option value="whisper-large-v3">whisper-large-v3</option>
+        </select>
+        <button id="applyProfileButton">Apply</button>
+      </div>
+    </details>
     <script src="./src/renderer/init.js"></script>
 </body>
 </html>

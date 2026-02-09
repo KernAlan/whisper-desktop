@@ -1,5 +1,6 @@
 import {
   chooseBestAudioInputDevice,
+  getPreferredDeviceId,
   listAudioDevices,
   setPreferredDeviceId,
 } from "./core/device-manager.js";
@@ -8,6 +9,7 @@ import { RecorderController, STATES } from "./core/recorder-controller.js";
 
 const MIN_RECORDING_DURATION_MS = 100;
 let controller;
+let runtimeConfig = null;
 
 function updateStatus(message, color) {
   const statusElement = document.getElementById("status");
@@ -33,6 +35,7 @@ function platformShortcutDisplay(shortcut) {
 }
 
 function renderRuntimeConfig(config) {
+  runtimeConfig = config;
   const runtimeInfo = document.getElementById("runtimeInfo");
   const hotkeyHint = document.getElementById("hotkeyHint");
   if (runtimeInfo) {
@@ -41,6 +44,13 @@ function renderRuntimeConfig(config) {
   if (hotkeyHint) {
     hotkeyHint.textContent = `Press ${platformShortcutDisplay(config.shortcut)} to start/stop recording`;
   }
+
+  const hotkeyInput = document.getElementById("hotkeyInput");
+  if (hotkeyInput) hotkeyInput.value = config.shortcut || "";
+  const injectionModeSelect = document.getElementById("injectionModeSelect");
+  if (injectionModeSelect) injectionModeSelect.value = config.clipboardRestoreMode || "deferred";
+  const modelSelect = document.getElementById("modelSelect");
+  if (modelSelect) modelSelect.value = config.model || "whisper-large-v3-turbo";
 }
 
 async function refreshMicSelection() {
@@ -61,6 +71,61 @@ async function refreshMicSelection() {
     updateStatus("Mic update failed", "red");
     sendDiagnostics({ type: "mic-refresh", status: "error" });
   }
+}
+
+async function refreshMicSourceOptions() {
+  const micSourceSelect = document.getElementById("micSourceSelect");
+  if (!micSourceSelect) return;
+
+  const preferred = getPreferredDeviceId();
+  const devices = await listAudioDevices().catch(() => []);
+  micSourceSelect.innerHTML = "";
+
+  const autoOption = document.createElement("option");
+  autoOption.value = "";
+  autoOption.textContent = "Auto";
+  micSourceSelect.appendChild(autoOption);
+
+  devices.forEach((device) => {
+    const option = document.createElement("option");
+    option.value = device.deviceId;
+    option.textContent = device.label || `Device (${device.deviceId})`;
+    micSourceSelect.appendChild(option);
+  });
+
+  micSourceSelect.value = preferred || "";
+}
+
+async function applyRuntimeSettings(patch) {
+  try {
+    const next = await window.electronAPI.updateRuntimeSettings(patch);
+    renderRuntimeConfig(next);
+    controller.mediaRecorderTimesliceMs = next.recorderTimesliceMs || controller.mediaRecorderTimesliceMs;
+    updateStatus("Settings applied", "black");
+  } catch (error) {
+    console.error("Failed to apply settings:", error);
+    updateStatus("Settings apply failed", "red");
+  }
+}
+
+function resolveProfile(profile) {
+  if (profile === "fast") {
+    return {
+      model: "whisper-large-v3-turbo",
+      clipboardRestoreMode: "off",
+      recorderTimesliceMs: 100,
+    };
+  }
+
+  if (profile === "balanced") {
+    return {
+      model: "whisper-large-v3",
+      clipboardRestoreMode: "deferred",
+      recorderTimesliceMs: 150,
+    };
+  }
+
+  return null;
 }
 
 async function testMicrophone() {
@@ -130,6 +195,7 @@ async function boot() {
       audioDevices.map((d) => ({ id: d.deviceId, label: d.label }))
     );
   }
+  await refreshMicSourceOptions();
 
   window.electronAPI.onToggleRecording(() => {
     controller.toggleRecording().catch((error) => {
@@ -148,6 +214,42 @@ async function boot() {
 
   const refreshMicButton = document.getElementById("refreshMicButton");
   if (refreshMicButton) refreshMicButton.addEventListener("click", refreshMicSelection);
+
+  const injectionModeSelect = document.getElementById("injectionModeSelect");
+  if (injectionModeSelect) {
+    injectionModeSelect.addEventListener("change", () => {
+      applyRuntimeSettings({ clipboardRestoreMode: injectionModeSelect.value });
+    });
+  }
+
+  const micSourceSelect = document.getElementById("micSourceSelect");
+  if (micSourceSelect) {
+    micSourceSelect.addEventListener("change", async () => {
+      setPreferredDeviceId(micSourceSelect.value || "");
+      await refreshMicSelection();
+    });
+  }
+
+  const applyHotkeyButton = document.getElementById("applyHotkeyButton");
+  if (applyHotkeyButton) {
+    applyHotkeyButton.addEventListener("click", () => {
+      const hotkeyInput = document.getElementById("hotkeyInput");
+      const shortcut = hotkeyInput?.value?.trim();
+      if (!shortcut) return;
+      applyRuntimeSettings({ shortcut });
+    });
+  }
+
+  const applyProfileButton = document.getElementById("applyProfileButton");
+  if (applyProfileButton) {
+    applyProfileButton.addEventListener("click", () => {
+      const profile = document.getElementById("profileSelect")?.value || "custom";
+      const model = document.getElementById("modelSelect")?.value || runtimeConfig.model;
+      const patch = resolveProfile(profile) || { model };
+      if (!patch.model) patch.model = model;
+      applyRuntimeSettings(patch);
+    });
+  }
 }
 
 boot().catch((error) => {

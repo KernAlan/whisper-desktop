@@ -6,6 +6,19 @@ Whisper Desktop is an Electron-based application that allows users to transcribe
 
 Tl;dr With the magic that is Whisper and the speed of the Groq servers, I thought I'd spend a weekend to make a tool to help me speak globally into my computer. 
 
+## What's New (v1.1.0)
+
+- Refactored app architecture into modular services/controllers for better maintainability
+- Added robust runtime diagnostics and telemetry (pipeline stage timings + rolling p50/p95 summaries)
+- Added daily persistent logs with retention controls
+- Added single-instance protection and cleaner runtime lifecycle behavior
+- Improved audio pipeline performance and microphone auto-selection/recovery
+- Added in-app settings panel for:
+  - Injection mode (`deferred`, `blocking`, `fast paste`)
+  - Mic source override + auto mode
+  - Hotkey updates at runtime
+  - Model/profile controls (`fast`, `balanced`, `custom`)
+
 ## Features
 
 - Global hotkey (Ctrl+Shift+Space) to start/stop recording

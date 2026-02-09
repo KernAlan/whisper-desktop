@@ -46,6 +46,26 @@
             #testMicButton:hover {
                 background-color: #0056b3;
             }
+            #refreshMicButton {
+                background-color: #2e8b57;
+                color: white;
+                border: none;
+                padding: 8px 12px;
+                border-radius: 5px;
+                font-size: 12px;
+                cursor: pointer;
+                transition: background-color 0.3s;
+                -webkit-app-region: no-drag;
+                margin-left: 8px;
+            }
+            #refreshMicButton:hover {
+                background-color: #20633e;
+            }
+            #runtimeInfo {
+                font-size: 11px;
+                color: #444;
+                margin-bottom: 10px;
+            }
             input {
                 display: none;
             }
@@ -53,8 +73,11 @@
     </head>
 <body>
     <h1>Whisper Desktop</h1>
-    <p>Press ⌘ + ⇧ + Space to start/stop recording</p>
+    <p id="hotkeyHint">Press shortcut to start/stop recording</p>
     <div id="status">Ready</div>
+    <div id="runtimeInfo">Loading runtime config...</div>
+    <button id="testMicButton">Test Microphone</button>
+    <button id="refreshMicButton">Refresh Mic</button>
     <script src="./src/renderer/init.js"></script>
 </body>
 </html>

@@ -1,6 +1,7 @@
 window.addEventListener("DOMContentLoaded", (event) => {
   console.log("DOM fully loaded and parsed");
   const script = document.createElement("script");
+  script.type = "module";
   script.src = "./src/renderer/renderer.js";
   script.onload = () => {
     console.log("Renderer script loaded");

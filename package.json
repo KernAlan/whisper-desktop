@@ -3,9 +3,11 @@
   "version": "1.0.0",
   "main": "src/main/main.js",
   "scripts": {
+    "dev": "electron .",
     "start": "electron .",
     "build": "electron-builder",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test test/*.test.js",
+    "check": "node --check src/main/main.js && node --check src/preload/preload.js"
   },
   "keywords": [],
   "author": "",

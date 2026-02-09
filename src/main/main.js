@@ -3,314 +3,150 @@ const {
   BrowserWindow,
   ipcMain,
   globalShortcut,
-  Menu,
-  clipboard,
-  screen,
   systemPreferences,
 } = require("electron");
 const path = require("path");
-const fs = require("fs-extra");
-const os = require("os");
-const { execFile } = require("child_process");
+const { loadConfig, validateConfig } = require("../shared/config");
+const { WindowManager } = require("./ui/window-manager");
+const { TranscriptionService } = require("./services/transcription-service");
+const { TypingService } = require("./services/typing-service");
+const { DiagnosticsService } = require("./services/diagnostics-service");
+const { Logger } = require("./services/logger");
+
 require("dotenv").config();
-const Groq = require("groq-sdk");
-const ks = require("node-key-sender");
 
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const config = loadConfig();
+const configIssues = validateConfig(config);
+const logger = new Logger({
+  logFilePath: process.env.APP_LOG_FILE || path.join(process.cwd(), "logs", "app.log"),
+});
+const diagnostics = new DiagnosticsService(config, logger);
+const windowManager = new WindowManager({ hideWindowMs: config.app.hideWindowMs });
+const transcriptionService = new TranscriptionService({
+  apiKey: config.transcription.apiKey,
+  model: config.transcription.model,
+  fallbackModel: config.transcription.fallbackModel,
+  timeoutMs: config.transcription.timeoutMs,
+  maxQueue: config.transcription.maxQueue,
+  logger,
+  onMetric: (metric) => diagnostics.logTranscriptionMetric(metric),
+});
+const typingService = new TypingService({
+  logger,
+  restoreMode: config.app.clipboardRestoreMode,
+  restoreDelayMs: config.app.clipboardRestoreDelayMs,
+});
 
-let mainWindow;
-let hasPromptedForAccessibility = false;
-
-function ensureMacAccessibilityPermission() {
-  if (process.platform !== "darwin") {
-    return true;
-  }
-
-  const isTrusted = systemPreferences.isTrustedAccessibilityClient(false);
-  if (isTrusted) {
-    return true;
-  }
-
-  if (!hasPromptedForAccessibility) {
-    hasPromptedForAccessibility = true;
-    try {
-      systemPreferences.isTrustedAccessibilityClient(true);
-    } catch (error) {
-      console.error(
-        "Failed to prompt for macOS accessibility permission:",
-        error
-      );
-    }
-  }
-
-  return false;
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+  logger.warn("Another Whisper Desktop instance is already running. Exiting.");
+  app.quit();
 }
 
-function runMacPasteShortcut() {
-  return new Promise((resolve, reject) => {
-    const script =
-      'tell application "System Events" to keystroke "v" using {command down}';
-    execFile("/usr/bin/osascript", ["-e", script], (error) => {
-      if (error) {
-        reject(error);
-      } else {
-        resolve();
-      }
-    });
-  });
-}
-
-function createWindow() {
-  const preloadPath = path.join(__dirname, "..", "preload", "preload.js");
-  console.log("Preload script path:", preloadPath);
-
-  mainWindow = new BrowserWindow({
-    width: 300,
-    height: 180,
-    show: false,
-    frame: false,
-    transparent: true,
-    alwaysOnTop: true,
-    skipTaskbar: true,
-    webPreferences: {
-      preload: preloadPath,
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  });
-
-  // Set permission handlers
-  mainWindow.webContents.session.setPermissionCheckHandler(
-    (webContents, permission, requestingOrigin, details) => {
-      if (permission === "media") {
-        return true;
-      }
-      return false;
-    }
-  );
-
-  mainWindow.webContents.session.setPermissionRequestHandler(
-    (webContents, permission, callback) => {
-      if (permission === "media") {
-        callback(true);
-      } else {
-        callback(false);
-      }
-    }
-  );
-
-  mainWindow.loadFile(path.join(__dirname, "..", "..", "index.html"));
-
-  mainWindow.webContents.on(
-    "console-message",
-    (event, level, message, line, sourceId) => {
-      console.log("Renderer Console:", message);
-    }
-  );
-
-  mainWindow.webContents.on("did-finish-load", () => {
-    console.log("Window loaded, setting up global shortcut");
-    setupGlobalShortcut();
-  });
-
-  mainWindow.webContents.on(
-    "did-fail-load",
-    (event, errorCode, errorDescription) => {
-      console.error("Failed to load:", errorCode, errorDescription);
-    }
-  );
-}
-
-function showWindow() {
-  if (mainWindow) {
-    // Get the position of the primary display
-    const { workArea } = screen.getPrimaryDisplay();
-
-    // Position the window in the bottom right corner
-    mainWindow.setPosition(
-      workArea.x + workArea.width - 320,
-      workArea.y + workArea.height - 200
-    );
-
-    mainWindow.showInactive(); // Show without focusing
-
-    // Automatically hide after 5 seconds (adjust as needed)
-    setTimeout(() => {
-      hideWindow();
-    }, 5000);
-  }
-}
-
-function hideWindow() {
-  if (mainWindow) {
-    mainWindow.hide();
-  }
-}
-
-function createApplicationMenu() {
-  const template = [
-    {
-      label: "File",
-      submenu: [
-        { label: "Show App", click: () => mainWindow.show() },
-        { type: "separator" },
-        { label: "Quit", click: () => app.quit() },
-      ],
-    },
-  ];
-
-  const menu = Menu.buildFromTemplate(template);
-  Menu.setApplicationMenu(menu);
-}
-
-function setupGlobalShortcut() {
-  globalShortcut.register("CommandOrControl+Shift+Space", () => {
-    console.log("Shortcut triggered in main process");
-    showWindow();
+function setupShortcut() {
+  globalShortcut.unregisterAll();
+  const ok = globalShortcut.register(config.shortcut, () => {
+    windowManager.showWindow();
     const windows = BrowserWindow.getAllWindows();
-    console.log(`Sending toggle-recording event to ${windows.length} windows`);
-    windows.forEach((window, index) => {
-      window.webContents.send("toggle-recording");
-      console.log(`toggle-recording event sent to window ${index + 1}`);
-    });
+    windows.forEach((window) => window.webContents.send("toggle-recording"));
   });
+  if (!ok) {
+    logger.error(`Failed to register global shortcut: ${config.shortcut}`);
+  }
+}
+
+function createAndWireMainWindow() {
+  const mainWindow = windowManager.createMainWindow();
+  windowManager.createMenu(() => app.quit());
+  mainWindow.webContents.on("did-finish-load", () => setupShortcut());
+  mainWindow.webContents.on("did-fail-load", (_event, code, description) => {
+    logger.error("Failed to load window:", code, description);
+  });
+  mainWindow.webContents.on("console-message", (_event, _level, message) => {
+    logger.log("Renderer Console:", message);
+  });
+  return mainWindow;
+}
+
+async function checkAndRequestMicrophonePermission() {
+  if (process.platform !== "darwin") return true;
+  const status = systemPreferences.getMediaAccessStatus("microphone");
+  if (status === "granted") return true;
+  try {
+    return await systemPreferences.askForMediaAccess("microphone");
+  } catch (error) {
+    logger.error("Error requesting microphone access:", error);
+    return false;
+  }
 }
 
 app.on("ready", () => {
+  diagnostics.printStartup();
+  logger.log(`Log file: ${logger.getCurrentLogPath()}`);
+  if (configIssues.length) {
+    configIssues.forEach((issue) => logger.warn(`[Config] ${issue}`));
+  }
+
   app.setLoginItemSettings({
     openAtLogin: true,
     openAsHidden: true,
   });
-  createWindow();
-  createApplicationMenu();
+
+  createAndWireMainWindow();
 });
-
-async function checkAndRequestMicrophonePermission() {
-  if (process.platform !== "darwin") {
-    return true; // For non-macOS platforms, assume permission is granted
-  }
-
-  const status = systemPreferences.getMediaAccessStatus("microphone");
-  console.log("Current microphone access status:", status);
-
-  if (status === "granted") {
-    return true;
-  }
-
-  try {
-    const hasAccess = await systemPreferences.askForMediaAccess("microphone");
-    console.log("Microphone access granted:", hasAccess);
-    return hasAccess;
-  } catch (error) {
-    console.error("Error requesting microphone access:", error);
-    return false;
-  }
-}
 
 app.on("will-quit", () => {
   globalShortcut.unregisterAll();
 });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
-    app.quit();
-  }
+  if (process.platform !== "darwin") app.quit();
 });
 
 app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
+    createAndWireMainWindow();
   }
 });
 
-ipcMain.handle("transcribe-audio", async (event, arrayBuffer) => {
-  try {
-    console.log(
-      "Received ArrayBuffer in main process, size:",
-      arrayBuffer.byteLength
-    );
-    const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-
-    // Create a temporary file
-    const tempDir = os.tmpdir();
-    const tempFilePath = path.join(tempDir, "temp_audio.webm");
-
-    // Convert ArrayBuffer to Buffer and write to the temporary file
-    const buffer = Buffer.from(arrayBuffer);
-    await fs.writeFile(tempFilePath, buffer);
-
-    // Create a read stream from the temporary file
-    const fileStream = fs.createReadStream(tempFilePath);
-
-    const response = await groq.audio.transcriptions.create({
-      file: fileStream,
-      model: "whisper-large-v3",
-      response_format: "text",
-    });
-
-    // Delete the temporary file
-    await fs.unlink(tempFilePath);
-    console.log("Groq API response:", response);
-
-    if (typeof response === "string") {
-      return response;
-    } else if (response && response.text) {
-      return response.text;
-    } else {
-      console.error("Unexpected response format:", response);
-      return null;
-    }
-  } catch (error) {
-    console.error("Transcription error:", error);
-    throw error;
-  }
+app.on("second-instance", () => {
+  const mainWindow = windowManager.getWindow();
+  if (!mainWindow) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
 });
 
-ipcMain.handle("simulate-typing", async (event, text) => {
-  try {
-    if (!ensureMacAccessibilityPermission()) {
-      console.warn(
-        "macOS accessibility permission is required to simulate typing."
-      );
-      return { success: false, reason: "mac-accessibility" };
-    }
+ipcMain.handle("transcribe-audio", async (_event, arrayBuffer) => {
+  return transcriptionService.transcribe(arrayBuffer);
+});
 
-    // Save the current clipboard content
-    const originalClipboard = clipboard.readText();
-
-    try {
-      // Copy the new text to clipboard
-      clipboard.writeText(text);
-
-      if (process.platform === "darwin") {
-        await runMacPasteShortcut();
-      } else {
-        const modifier = "control";
-        await ks.sendCombination([modifier, "v"]);
-      }
-
-      return { success: true };
-    } finally {
-      // Allow time for the target app to consume the clipboard contents before restoring
-      await delay(300);
-      // Restore the original clipboard content
-      clipboard.writeText(originalClipboard);
-    }
-  } catch (error) {
-    console.error("Error simulating typing:", error);
-    return { success: false, reason: "error", error: error.message };
-  }
+ipcMain.handle("simulate-typing", async (_event, text) => {
+  return typingService.pasteText(text);
 });
 
 ipcMain.handle("request-microphone-access", async () => {
   const hasAccess = await checkAndRequestMicrophonePermission();
-  if (hasAccess) {
-    return true;
-  } else {
-    throw new Error("Microphone access not granted");
-  }
+  if (!hasAccess) throw new Error("Microphone access not granted");
+  return true;
 });
 
 ipcMain.handle("hide-window", () => {
-  hideWindow();
+  windowManager.hideWindow();
+});
+
+ipcMain.handle("get-runtime-config", () => {
+  return {
+    shortcut: config.shortcut,
+    model: config.transcription.model,
+    fallbackModel: config.transcription.fallbackModel,
+    timeoutMs: config.transcription.timeoutMs,
+    maxQueue: config.transcription.maxQueue,
+    recorderTimesliceMs: config.app.mediaRecorderTimesliceMs,
+    clipboardRestoreMode: config.app.clipboardRestoreMode,
+  };
+});
+
+ipcMain.on("renderer-diagnostics", (_event, payload) => {
+  diagnostics.logRendererPayload(payload);
 });

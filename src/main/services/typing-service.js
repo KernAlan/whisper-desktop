@@ -44,10 +44,12 @@ class TypingService {
     };
 
     try {
-      clipboardSnapshot = clipboard.availableFormats().map((format) => ({
-        format,
-        data: clipboard.readBuffer(format),
-      }));
+      if (this.restoreMode !== "off") {
+        clipboardSnapshot = clipboard.availableFormats().map((format) => ({
+          format,
+          data: clipboard.readBuffer(format),
+        }));
+      }
 
       clipboard.writeText(text);
       if (process.platform === "darwin") {
@@ -55,6 +57,18 @@ class TypingService {
           "-e",
           'tell application "System Events" to keystroke "v" using command down',
         ]);
+      } else if (process.platform === "win32") {
+        try {
+          await execFileAsync("powershell.exe", [
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "$ws = New-Object -ComObject WScript.Shell; $ws.SendKeys('^v')",
+          ]);
+        } catch (windowsPasteError) {
+          this.logger.warn("Native Windows paste failed, falling back to node-key-sender:", windowsPasteError);
+          await ks.sendCombination(["control", "v"]);
+        }
       } else {
         await ks.sendCombination(["control", "v"]);
       }

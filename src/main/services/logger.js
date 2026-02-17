@@ -67,9 +67,7 @@ class Logger {
       .join(" ");
   }
 
-  _write(level, ...args) {
-    const message = this._serialize(args);
-    const line = `${new Date().toISOString()} [${level}] ${message}`;
+  _writeToConsole(level, ...args) {
     if (level === "ERROR") {
       console.error(...args);
     } else if (level === "WARN") {
@@ -77,6 +75,12 @@ class Logger {
     } else {
       console.log(...args);
     }
+  }
+
+  _write(level, ...args) {
+    const message = this._serialize(args);
+    const line = `${new Date().toISOString()} [${level}] ${message}`;
+    this._writeToConsole(level, ...args);
 
     const targetLogFile = this.getCurrentLogPath();
     this._pruneArchives()

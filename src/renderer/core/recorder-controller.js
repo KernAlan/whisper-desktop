@@ -1,5 +1,7 @@
 import { RecorderStateMachine, STATES } from "./recorder-state-machine.js";
 
+const CHUNK_SIZE_LIMIT = 20 * 1024 * 1024; // 20MB
+
 export class RecorderController {
   constructor({
     audioEngine,
@@ -9,6 +11,7 @@ export class RecorderController {
     focusRestoreDelayMs = 120,
     requestMicrophoneAccess,
     transcribeAudio,
+    transcribeAudioChunked,
     simulateTyping,
     updateStatus,
     onDiagnostics,
@@ -20,6 +23,7 @@ export class RecorderController {
     this.focusRestoreDelayMs = focusRestoreDelayMs;
     this.requestMicrophoneAccess = requestMicrophoneAccess;
     this.transcribeAudio = transcribeAudio;
+    this.transcribeAudioChunked = transcribeAudioChunked;
     this.simulateTyping = simulateTyping;
     this.updateStatus = updateStatus;
     this.onDiagnostics = typeof onDiagnostics === "function" ? onDiagnostics : () => {};
@@ -130,7 +134,25 @@ export class RecorderController {
       }
 
       const transcribeStartedAt = Date.now();
-      const transcript = await this.transcribeAudio(arrayBuffer);
+      let transcript;
+
+      if (bytes > CHUNK_SIZE_LIMIT && this.transcribeAudioChunked) {
+        // Split audioChunks into groups that each stay under the size limit
+        const chunkGroups = this._splitChunks(this.audioChunks, CHUNK_SIZE_LIMIT);
+        const sizeMB = (bytes / (1024 * 1024)).toFixed(1);
+        console.log(`Large recording (${sizeMB}MB) — splitting into ${chunkGroups.length} chunks`);
+        if (bytes > 100 * 1024 * 1024) {
+          console.warn(`Very large recording (${sizeMB}MB) — transcription may take a while`);
+        }
+        const buffers = [];
+        for (const group of chunkGroups) {
+          const blob = new Blob(group, { type: "audio/webm" });
+          buffers.push(await blob.arrayBuffer());
+        }
+        transcript = await this.transcribeAudioChunked(buffers);
+      } else {
+        transcript = await this.transcribeAudio(arrayBuffer);
+      }
       transcribeMs = Date.now() - transcribeStartedAt;
 
       if (!transcript || typeof transcript !== "string" || !transcript.trim()) {
@@ -179,6 +201,27 @@ export class RecorderController {
         bytes,
       });
     }
+  }
+  _splitChunks(audioChunks, sizeLimit) {
+    const groups = [];
+    let currentGroup = [];
+    let currentSize = 0;
+
+    for (const chunk of audioChunks) {
+      if (currentSize + chunk.size > sizeLimit && currentGroup.length > 0) {
+        groups.push(currentGroup);
+        currentGroup = [];
+        currentSize = 0;
+      }
+      currentGroup.push(chunk);
+      currentSize += chunk.size;
+    }
+
+    if (currentGroup.length > 0) {
+      groups.push(currentGroup);
+    }
+
+    return groups;
   }
 }
 

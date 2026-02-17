@@ -1,6 +1,5 @@
 import {
   chooseBestAudioInputDevice,
-  getPreferredDeviceId,
   listAudioDevices,
   setPreferredDeviceId,
 } from "./core/device-manager.js";
@@ -26,8 +25,8 @@ function platformShortcutDisplay(shortcut) {
   if (!shortcut) return "";
   if (navigator.platform.toLowerCase().includes("mac")) {
     return shortcut
-      .replace("CommandOrControl", "⌘")
-      .replace("Shift", "⇧")
+      .replace("CommandOrControl", "\u2318")
+      .replace("Shift", "\u21e7")
       .replace("Space", "Space")
       .replace(/\+/g, " + ");
   }
@@ -44,17 +43,10 @@ function renderRuntimeConfig(config) {
   if (hotkeyHint) {
     hotkeyHint.textContent = `Press ${platformShortcutDisplay(config.shortcut)} to start/stop recording`;
   }
-
-  const hotkeyInput = document.getElementById("hotkeyInput");
-  if (hotkeyInput) hotkeyInput.value = config.shortcut || "";
-  const injectionModeSelect = document.getElementById("injectionModeSelect");
-  if (injectionModeSelect) injectionModeSelect.value = config.clipboardRestoreMode || "deferred";
-  const modelSelect = document.getElementById("modelSelect");
-  if (modelSelect) modelSelect.value = config.model || "whisper-large-v3-turbo";
 }
 
 async function refreshMicSelection() {
-  if (!controller) return;
+  if (!controller) return { ok: false, error: "not initialized" };
   try {
     await controller.requestMicrophoneAccess();
     await controller.audioEngine.ensureStream({ forceRefresh: true });
@@ -66,66 +58,13 @@ async function refreshMicSelection() {
       label: device.label,
       deviceId: device.id,
     });
+    return { ok: true, label: device.label, deviceId: device.id };
   } catch (error) {
     console.error("Mic refresh failed:", error);
     updateStatus("Mic update failed", "red");
     sendDiagnostics({ type: "mic-refresh", status: "error" });
+    return { ok: false, error: error.message };
   }
-}
-
-async function refreshMicSourceOptions() {
-  const micSourceSelect = document.getElementById("micSourceSelect");
-  if (!micSourceSelect) return;
-
-  const preferred = getPreferredDeviceId();
-  const devices = await listAudioDevices().catch(() => []);
-  micSourceSelect.innerHTML = "";
-
-  const autoOption = document.createElement("option");
-  autoOption.value = "";
-  autoOption.textContent = "Auto";
-  micSourceSelect.appendChild(autoOption);
-
-  devices.forEach((device) => {
-    const option = document.createElement("option");
-    option.value = device.deviceId;
-    option.textContent = device.label || `Device (${device.deviceId})`;
-    micSourceSelect.appendChild(option);
-  });
-
-  micSourceSelect.value = preferred || "";
-}
-
-async function applyRuntimeSettings(patch) {
-  try {
-    const next = await window.electronAPI.updateRuntimeSettings(patch);
-    renderRuntimeConfig(next);
-    controller.mediaRecorderTimesliceMs = next.recorderTimesliceMs || controller.mediaRecorderTimesliceMs;
-    updateStatus("Settings applied", "black");
-  } catch (error) {
-    console.error("Failed to apply settings:", error);
-    updateStatus("Settings apply failed", "red");
-  }
-}
-
-function resolveProfile(profile) {
-  if (profile === "fast") {
-    return {
-      model: "whisper-large-v3-turbo",
-      clipboardRestoreMode: "off",
-      recorderTimesliceMs: 100,
-    };
-  }
-
-  if (profile === "balanced") {
-    return {
-      model: "whisper-large-v3",
-      clipboardRestoreMode: "deferred",
-      recorderTimesliceMs: 150,
-    };
-  }
-
-  return null;
 }
 
 async function testMicrophone() {
@@ -151,12 +90,14 @@ async function testMicrophone() {
 
     if (detected) {
       updateStatus("Microphone is working", "green");
-    } else {
-      updateStatus("No audio detected", "red");
+      return { detected: true };
     }
+    updateStatus("No audio detected", "red");
+    return { detected: false };
   } catch (error) {
     console.error("Error testing microphone:", error);
     updateStatus("Mic test failed", "red");
+    return { detected: false, error: error.message };
   }
 }
 
@@ -179,6 +120,7 @@ async function boot() {
     focusRestoreDelayMs: isMac ? 180 : 60,
     requestMicrophoneAccess: () => window.electronAPI.requestMicrophoneAccess(),
     transcribeAudio: (arrayBuffer) => window.electronAPI.transcribeAudio(arrayBuffer),
+    transcribeAudioChunked: (arrayBuffers) => window.electronAPI.transcribeAudioChunked(arrayBuffers),
     simulateTyping: (text) => window.electronAPI.simulateTyping(text),
     updateStatus,
     onDiagnostics: sendDiagnostics,
@@ -202,7 +144,6 @@ async function boot() {
       devices: compactDevices,
     });
   }
-  await refreshMicSourceOptions();
 
   window.electronAPI.onToggleRecording(() => {
     controller.toggleRecording().catch((error) => {
@@ -216,47 +157,33 @@ async function boot() {
     refreshMicSelection();
   });
 
-  const testMicButton = document.getElementById("testMicButton");
-  if (testMicButton) testMicButton.addEventListener("click", testMicrophone);
+  window.electronAPI.onRefreshMic(async () => {
+    const result = await refreshMicSelection();
+    window.electronAPI.sendRefreshMicResult(result);
+  });
 
-  const refreshMicButton = document.getElementById("refreshMicButton");
-  if (refreshMicButton) refreshMicButton.addEventListener("click", refreshMicSelection);
+  window.electronAPI.onTestMic(async () => {
+    const result = await testMicrophone();
+    window.electronAPI.sendTestMicResult(result);
+  });
 
-  const injectionModeSelect = document.getElementById("injectionModeSelect");
-  if (injectionModeSelect) {
-    injectionModeSelect.addEventListener("change", () => {
-      applyRuntimeSettings({ clipboardRestoreMode: injectionModeSelect.value });
+  window.electronAPI.onRetryPaste(async (text) => {
+    try {
+      await window.electronAPI.simulateTyping(text);
+    } catch (error) {
+      console.error("Retry paste failed:", error);
+    }
+  });
+
+  window.electronAPI.onListDevices(async () => {
+    const devices = await listAudioDevices().catch(() => []);
+    window.electronAPI.sendListDevicesResult({
+      devices: devices.map((d) => ({
+        label: d.label || "unknown",
+        deviceId: d.deviceId || "unknown",
+      })),
     });
-  }
-
-  const micSourceSelect = document.getElementById("micSourceSelect");
-  if (micSourceSelect) {
-    micSourceSelect.addEventListener("change", async () => {
-      setPreferredDeviceId(micSourceSelect.value || "");
-      await refreshMicSelection();
-    });
-  }
-
-  const applyHotkeyButton = document.getElementById("applyHotkeyButton");
-  if (applyHotkeyButton) {
-    applyHotkeyButton.addEventListener("click", () => {
-      const hotkeyInput = document.getElementById("hotkeyInput");
-      const shortcut = hotkeyInput?.value?.trim();
-      if (!shortcut) return;
-      applyRuntimeSettings({ shortcut });
-    });
-  }
-
-  const applyProfileButton = document.getElementById("applyProfileButton");
-  if (applyProfileButton) {
-    applyProfileButton.addEventListener("click", () => {
-      const profile = document.getElementById("profileSelect")?.value || "custom";
-      const model = document.getElementById("modelSelect")?.value || runtimeConfig.model;
-      const patch = resolveProfile(profile) || { model };
-      if (!patch.model) patch.model = model;
-      applyRuntimeSettings(patch);
-    });
-  }
+  });
 }
 
 boot().catch((error) => {

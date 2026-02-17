@@ -3,6 +3,10 @@ class DiagnosticsService {
     this.config = config;
     this.logger = logger || console;
     this.printed = false;
+    this._readySummaryPrinted = false;
+    this._bootStart = Date.now();
+    this._micLabel = null;
+    this._deviceCount = 0;
     this.pipelineSamples = [];
     this.transcribeSamples = [];
     this.preprocessSamples = [];
@@ -14,64 +18,42 @@ class DiagnosticsService {
     if (this.printed) return;
     this.printed = true;
 
-    const innerWidth = 76;
-    const line = (text = "") => `| ${text.padEnd(innerWidth - 2)}|`;
-    const border = `+${"-".repeat(innerWidth)}+`;
-    const fit = (text, width) => {
-      const value = String(text ?? "");
-      if (value.length <= width) return value.padEnd(width);
-      if (width <= 3) return ".".repeat(width);
-      return `${value.slice(0, width - 3)}...`;
-    };
-    const step = (label, value) => line(fit(`> ${label.padEnd(28, ".")} ${value}`, innerWidth - 2));
+    const dim = (s) => `\x1b[2m${s}\x1b[0m`;
+    const bold = (s) => `\x1b[1m${s}\x1b[0m`;
+    const green = (s) => `\x1b[32m${s}\x1b[0m`;
+    const red = (s) => `\x1b[31m${s}\x1b[0m`;
+    const cyan = (s) => `\x1b[36m${s}\x1b[0m`;
+
+    const kv = (label, value) => `  ${dim(label.padEnd(18))} ${value}`;
     const shortPath = (value) => {
       const text = String(value || "");
-      if (text.length <= 34) return text;
-      return `...${text.slice(-31)}`;
+      if (text.length <= 40) return text;
+      return `...${text.slice(-37)}`;
     };
-    const logo = [
-      " __        ___     _                          ____            _    _             ",
-      " \\ \\      / / |__ (_)___ _ __   ___ _ __     |  _ \\  ___  ___| | _| |_ ___  _ __ ",
-      "  \\ \\ /\\ / /| '_ \\| / __| '_ \\ / _ \\ '__|    | | | |/ _ \\/ __| |/ / __/ _ \\| '__|",
-      "   \\ V  V / | | | | \\__ \\ |_) |  __/ |       | |_| |  __/\\__ \\   <| || (_) | |   ",
-      "    \\_/\\_/  |_| |_|_|___/ .__/ \\___|_|       |____/ \\___||___/_|\\_\\\\__\\___/|_|   ",
-      "                        |_|                                                        ",
-    ];
 
-    this.logger.log(border);
-    logo.forEach((logoLine) => this.logger.log(line(fit(logoLine, innerWidth - 2))));
-    this.logger.log(line(fit(`BOOT SEQUENCE // VERSION ${appVersion || "unknown"}`, innerWidth - 2)));
-    this.logger.log(border);
-    this.logger.log(step("Kernel", "ONLINE"));
-    this.logger.log(step("Audio Pipeline", "ONLINE"));
-    this.logger.log(step("Transcription Engine", "ONLINE"));
-    this.logger.log(step("Input Hotkey", this.config.shortcut));
-    this.logger.log(step("Model", this.config.transcription.model));
-    this.logger.log(step("Fallback", this.config.transcription.fallbackModel));
-    this.logger.log(step("Request Timeout", `${this.config.transcription.timeoutMs}ms`));
-    this.logger.log(step("Queue Capacity", String(this.config.transcription.maxQueue)));
     const hasApiKey = Boolean(this.config.transcription.apiKey);
-    this.logger.log(step("API Credential", hasApiKey ? "PRESENT" : "MISSING"));
-    this.logger.log(step("Platform", `${process.platform} (${process.arch})`));
-    this.logger.log(step("Runtime", `Node ${process.version} | Electron ${process.versions.electron}`));
-    const fileValue = shortPath(logFilePath || "n/a");
-    this.logger.log(step("Log Stream", fileValue));
-    this.logger.log(border);
-    this.logger.log(line("SYSTEM READY"));
-    this.logger.log(border);
+
+    this.logger.log("");
+    this.logger.log(`  ${bold("Whisper Desktop")} ${dim(`v${appVersion || "?"}`)}`);
+    this.logger.log("");
+    this.logger.log(kv("Hotkey", cyan(this.config.shortcut)));
+    this.logger.log(kv("Model", this.config.transcription.model));
+    this.logger.log(kv("Fallback", this.config.transcription.fallbackModel));
+    this.logger.log(kv("Timeout", `${this.config.transcription.timeoutMs}ms`));
+    this.logger.log(kv("Queue", String(this.config.transcription.maxQueue)));
+    this.logger.log(kv("API Key", hasApiKey ? green("ok") : red("MISSING")));
+    this.logger.log(kv("Platform", `${process.platform} (${process.arch})`));
+    this.logger.log(kv("Runtime", dim(`Node ${process.version} | Electron ${process.versions.electron}`)));
+    this.logger.log(kv("Log", dim(shortPath(logFilePath || "n/a"))));
+    this.logger.log("");
   }
 
   logRendererPayload(payload) {
     if (!payload || typeof payload !== "object") return;
     const type = payload.type || "unknown";
     if (type === "mic-selected") {
-      const label = String(payload.label || "unknown")
-        .replace(/\s+/g, " ")
-        .slice(0, 64);
-      const deviceId = String(payload.deviceId || "unknown").slice(0, 24);
-      this.logger.log(
-        `[AUDIO] mic=${label} id=${deviceId}`
-      );
+      this._micLabel = String(payload.label || "unknown").replace(/\s+/g, " ").slice(0, 64);
+      this._tryPrintReadySummary();
       return;
     }
     if (type === "mic-refresh") {
@@ -81,14 +63,8 @@ class DiagnosticsService {
       return;
     }
     if (type === "audio-devices") {
-      const count = Number.isFinite(payload.count) ? payload.count : 0;
-      const summary = Array.isArray(payload.devices)
-        ? payload.devices
-            .slice(0, 3)
-            .map((item) => String(item).replace(/\s+/g, " ").slice(0, 30))
-            .join(" | ")
-        : "none";
-      this.logger.log(`[AUDIO] inputs=${count} :: ${summary}`);
+      this._deviceCount = Number.isFinite(payload.count) ? payload.count : 0;
+      this._tryPrintReadySummary();
       return;
     }
     if (type === "pipeline-latency") {
@@ -108,6 +84,44 @@ class DiagnosticsService {
       return;
     }
     this.logger.log(`[Renderer] ${JSON.stringify(payload)}`);
+  }
+
+  _tryPrintReadySummary() {
+    if (this._readySummaryPrinted) return;
+    if (!this._micLabel) return;
+    this._readySummaryPrinted = true;
+
+    // Small delay to let audio-devices event arrive too
+    setTimeout(() => this._printReadySummary(), 200);
+  }
+
+  _printReadySummary() {
+    const bootMs = Date.now() - this._bootStart;
+    const green = (s) => `\x1b[32m${s}\x1b[0m`;
+    const dim = (s) => `\x1b[2m${s}\x1b[0m`;
+    const bold = (s) => `\x1b[1m${s}\x1b[0m`;
+
+    const micShort = this._micLabel.length > 40
+      ? this._micLabel.slice(0, 37) + "..."
+      : this._micLabel;
+
+    const hasKey = Boolean(this.config.transcription.apiKey);
+
+    const parts = [];
+    parts.push(`${green("Ready.")} Booted in ~${bootMs}ms.`);
+    if (this._deviceCount > 0) {
+      parts.push(`Mic: ${micShort} ${dim(`(${this._deviceCount} available)`)}`);
+    } else {
+      parts.push(`Mic: ${micShort}`);
+    }
+    if (!hasKey) {
+      parts.push(`\x1b[31mNo API key set — transcription will fail.\x1b[0m`);
+    }
+    parts.push(`Hit ${bold(this.config.shortcut)} to record, or type ${bold("help")} for commands.`);
+
+    this.logger.log("");
+    parts.forEach((p) => this.logger.log(`  ${p}`));
+    this.logger.log("");
   }
 
   logTranscriptionMetric(metric) {

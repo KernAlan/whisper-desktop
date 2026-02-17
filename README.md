@@ -6,19 +6,6 @@ Whisper Desktop is an Electron-based application that allows users to transcribe
 
 Tl;dr With the magic that is Whisper and the speed of the Groq servers, I thought I'd spend a weekend to make a tool to help me speak globally into my computer. 
 
-## What's New (v1.1.0)
-
-- Refactored app architecture into modular services/controllers for better maintainability
-- Added robust runtime diagnostics and telemetry (pipeline stage timings + rolling p50/p95 summaries)
-- Added daily persistent logs with retention controls
-- Added single-instance protection and cleaner runtime lifecycle behavior
-- Improved audio pipeline performance and microphone auto-selection/recovery
-- Added in-app settings panel for:
-  - Injection mode (`deferred`, `blocking`, `fast paste`)
-  - Mic source override + auto mode
-  - Hotkey updates at runtime
-  - Model/profile controls (`fast`, `balanced`, `custom`)
-
 ## Features
 
 - Global hotkey (Ctrl+Shift+Space) to start/stop recording
@@ -26,6 +13,8 @@ Tl;dr With the magic that is Whisper and the speed of the Groq servers, I though
 - Automatic microphone selection with device change detection
 - Transcription using Groq Whisper models (fast default with fallback)
 - Automatic insertion of transcribed text into the active text input field
+- Terminal CLI for runtime configuration and diagnostics
+- One-shot CLI commands for scripting and automation
 
 ## Installation
 
@@ -74,22 +63,46 @@ Tl;dr With the magic that is Whisper and the speed of the Groq servers, I though
 4. Press `Ctrl+Shift+Space` again to stop recording and initiate transcription
 5. The transcribed text will be automatically inserted into the active text input field
 
+### CLI
+
+`npm start` launches an interactive console where you can configure the app at runtime:
+
+```
+whisper> help
+  status                     Show current config
+  set model <name>           Change transcription model
+  set hotkey <combo>         Change global shortcut
+  set injection <mode>       deferred | blocking | off
+  set profile <name>         fast | balanced
+  set timeslice <ms>         Recorder timeslice (min 50)
+  set restore-delay <ms>     Clipboard restore delay
+  refresh mic                Refresh microphone
+  test mic                   Test microphone levels
+  devices                    List audio inputs
+  perf                       Performance stats
+  quit                       Exit
+```
+
+You can also send one-shot commands to a running instance:
+
+```
+node cli.js status
+node cli.js set model whisper-large-v3
+node cli.js set hotkey Ctrl+Shift+Z
+node cli.js perf
+node cli.js refresh mic
+```
+
+This works from scripts, Stream Deck buttons, or any automation tool.
+
 ### Terminal Diagnostics
 
-On startup, the app logs a configuration summary in the terminal, including:
-
-- Active transcription model and fallback model
-- Whether `GROQ_API_KEY` is present (masked)
-- Runtime platform/version info
-
-During usage, it also logs:
+On startup, the terminal shows the current configuration. During usage it logs:
 
 - Selected microphone device and refresh events
-- Transcription and end-to-end pipeline latency (`ms`)
-- Stage timings (`preprocess`, `transcribe`, `paste`, `restore`) for bottleneck analysis
+- Pipeline latency per transcription (`preprocess`, `transcribe`, `paste`, `restore`)
 - Rolling performance summaries every 10 runs (`p50`/`p95`)
-- Persistent daily logs (`app-YYYYMMDD.log`) in the log directory from `APP_LOG_FILE`
-- Retention control with `APP_LOG_MAX_FILES`
+- Persistent daily logs (`app-YYYYMMDD.log`) in the configured log directory
 
 ### Platform-Specific Notes
 
@@ -113,7 +126,9 @@ During usage, it also logs:
 
 The main components of the application are:
 
+- `cli.js`: Terminal wrapper — interactive REPL and one-shot CLI
 - `src/main/main.js`: Main process orchestration + IPC wiring
+- `src/main/services/console-service.js`: Named pipe server for CLI commands
 - `src/main/services/transcription-service.js`: queue/timeout/fallback transcription pipeline
 - `src/main/services/typing-service.js`: paste injection with clipboard restore
 - `src/main/services/diagnostics-service.js`: startup and runtime terminal diagnostics
@@ -151,8 +166,8 @@ If you encounter any issues with audio recording or transcription:
 1. Ensure your microphone is properly connected and selected as the default input device
 2. Check the console logs for any error messages
 3. Verify that your Groq API key is correctly set in the `.env` file
-4. You may need to install Java if you don't already have it installed: https://www.java.com/download/ie_manual.jsp
-5. If Windows selects the wrong Bluetooth microphone, start speaking once after connecting your device. The app now auto-refreshes its mic selection when devices change.
+4. If Windows selects the wrong Bluetooth microphone, start speaking once after connecting your device. The app auto-refreshes its mic selection when devices change.
+5. If the CLI can't connect, make sure the app is running (`npm start` or `npm run dev`).
 
 ## Roadmap
 

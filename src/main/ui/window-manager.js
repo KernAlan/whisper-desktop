@@ -11,7 +11,7 @@ class WindowManager {
     const preloadPath = path.join(__dirname, "..", "..", "preload", "preload.js");
     this.mainWindow = new BrowserWindow({
       width: 360,
-      height: 420,
+      height: 220,
       show: false,
       frame: false,
       transparent: true,
@@ -52,7 +52,7 @@ class WindowManager {
   showWindow() {
     if (!this.mainWindow) return;
     const { workArea } = screen.getPrimaryDisplay();
-    this.mainWindow.setPosition(workArea.x + workArea.width - 380, workArea.y + workArea.height - 250);
+    this.mainWindow.setPosition(workArea.x + workArea.width - 380, workArea.y + workArea.height - 240);
     this.mainWindow.showInactive();
     setTimeout(() => this.hideWindow(), this.hideWindowMs);
   }

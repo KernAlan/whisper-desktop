@@ -12,10 +12,12 @@ const { TranscriptionService } = require("./services/transcription-service");
 const { TypingService } = require("./services/typing-service");
 const { DiagnosticsService } = require("./services/diagnostics-service");
 const { Logger } = require("./services/logger");
+const { ConsoleService } = require("./services/console-service");
 
 require("dotenv").config();
 
 const config = loadConfig();
+const recoveryDir = path.join(app.getPath("userData"), "recovery");
 const runtimeSettings = {
   shortcut: config.shortcut,
   model: config.transcription.model,
@@ -40,6 +42,7 @@ const transcriptionService = new TranscriptionService({
   maxQueue: config.transcription.maxQueue,
   logger,
   onMetric: (metric) => diagnostics.logTranscriptionMetric(metric),
+  recoveryDir,
 });
 const typingService = new TypingService({
   logger,
@@ -49,8 +52,17 @@ const typingService = new TypingService({
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
-  logger.warn("Another Whisper Desktop instance is already running. Exiting.");
-  app.quit();
+  // New instance couldn't get the lock — the old instance will receive
+  // 'second-instance' and quit. Wait for it, then retry.
+  console.log("Waiting for previous instance to exit...");
+  setTimeout(() => {
+    const retry = app.requestSingleInstanceLock();
+    if (!retry) {
+      console.error("Could not take over from previous instance.");
+      app.exit(1);
+    }
+    // Lock acquired — continue boot normally
+  }, 1500);
 }
 
 function setupShortcut() {
@@ -65,8 +77,56 @@ function setupShortcut() {
   }
 }
 
+function applySettings(payload) {
+  if (!payload || typeof payload !== "object") return;
+
+  if (typeof payload.shortcut === "string" && payload.shortcut.trim()) {
+    runtimeSettings.shortcut = payload.shortcut.trim();
+  }
+
+  if (typeof payload.model === "string" && payload.model.trim()) {
+    runtimeSettings.model = payload.model.trim();
+    transcriptionService.setModels({
+      model: runtimeSettings.model,
+      fallbackModel: runtimeSettings.fallbackModel,
+    });
+  }
+
+  if (
+    typeof payload.clipboardRestoreMode === "string" &&
+    ["deferred", "blocking", "off"].includes(payload.clipboardRestoreMode)
+  ) {
+    runtimeSettings.clipboardRestoreMode = payload.clipboardRestoreMode;
+  }
+
+  if (Number.isFinite(payload.clipboardRestoreDelayMs) && payload.clipboardRestoreDelayMs > 0) {
+    runtimeSettings.clipboardRestoreDelayMs = Number(payload.clipboardRestoreDelayMs);
+  }
+
+  if (Number.isFinite(payload.recorderTimesliceMs) && payload.recorderTimesliceMs >= 50) {
+    runtimeSettings.recorderTimesliceMs = Number(payload.recorderTimesliceMs);
+  }
+
+  typingService.setRestoreConfig({
+    restoreMode: runtimeSettings.clipboardRestoreMode,
+    restoreDelayMs: runtimeSettings.clipboardRestoreDelayMs,
+  });
+}
+
+const consoleService = new ConsoleService({
+  runtimeSettings,
+  applySettings,
+  setupShortcut,
+  diagnostics,
+  logger,
+  mainWindow: null,
+  app,
+  transcriptionService,
+});
+
 function createAndWireMainWindow() {
   const mainWindow = windowManager.createMainWindow();
+  consoleService.setMainWindow(mainWindow);
   windowManager.createMenu(() => app.quit());
   mainWindow.webContents.on("did-finish-load", () => setupShortcut());
   mainWindow.webContents.on("did-fail-load", (_event, code, description) => {
@@ -122,6 +182,7 @@ app.on("ready", () => {
   });
 
   createAndWireMainWindow();
+  consoleService.start();
 });
 
 app.on("will-quit", () => {
@@ -139,15 +200,17 @@ app.on("activate", () => {
 });
 
 app.on("second-instance", () => {
-  const mainWindow = windowManager.getWindow();
-  if (!mainWindow) return;
-  if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.show();
-  mainWindow.focus();
+  // New instance is taking over — quit so it can acquire the lock
+  logger.log("New instance detected — yielding.");
+  app.quit();
 });
 
 ipcMain.handle("transcribe-audio", async (_event, arrayBuffer) => {
   return transcriptionService.transcribe(arrayBuffer);
+});
+
+ipcMain.handle("transcribe-audio-chunked", async (_event, arrayBuffers) => {
+  return transcriptionService.transcribeChunked(arrayBuffers);
 });
 
 ipcMain.handle("simulate-typing", async (_event, text) => {
@@ -184,46 +247,25 @@ ipcMain.handle("get-runtime-config", () => {
 });
 
 ipcMain.handle("update-runtime-settings", async (_event, payload) => {
-  if (!payload || typeof payload !== "object") {
-    return getRuntimeConfigPayload();
-  }
-
-  if (typeof payload.shortcut === "string" && payload.shortcut.trim()) {
-    runtimeSettings.shortcut = payload.shortcut.trim();
+  applySettings(payload);
+  if (typeof payload?.shortcut === "string" && payload.shortcut.trim()) {
     setupShortcut();
   }
-
-  if (typeof payload.model === "string" && payload.model.trim()) {
-    runtimeSettings.model = payload.model.trim();
-    transcriptionService.setModels({
-      model: runtimeSettings.model,
-      fallbackModel: runtimeSettings.fallbackModel,
-    });
-  }
-
-  if (
-    typeof payload.clipboardRestoreMode === "string" &&
-    ["deferred", "blocking", "off"].includes(payload.clipboardRestoreMode)
-  ) {
-    runtimeSettings.clipboardRestoreMode = payload.clipboardRestoreMode;
-  }
-
-  if (Number.isFinite(payload.clipboardRestoreDelayMs) && payload.clipboardRestoreDelayMs > 0) {
-    runtimeSettings.clipboardRestoreDelayMs = Number(payload.clipboardRestoreDelayMs);
-  }
-
-  if (Number.isFinite(payload.recorderTimesliceMs) && payload.recorderTimesliceMs >= 50) {
-    runtimeSettings.recorderTimesliceMs = Number(payload.recorderTimesliceMs);
-  }
-
-  typingService.setRestoreConfig({
-    restoreMode: runtimeSettings.clipboardRestoreMode,
-    restoreDelayMs: runtimeSettings.clipboardRestoreDelayMs,
-  });
-
   return getRuntimeConfigPayload();
 });
 
 ipcMain.on("renderer-diagnostics", (_event, payload) => {
   diagnostics.logRendererPayload(payload);
+});
+
+ipcMain.on("refresh-mic-result", (_event, data) => {
+  consoleService.handleIpcResult("refresh-mic-result", data);
+});
+
+ipcMain.on("test-mic-result", (_event, data) => {
+  consoleService.handleIpcResult("test-mic-result", data);
+});
+
+ipcMain.on("list-devices-result", (_event, data) => {
+  consoleService.handleIpcResult("list-devices-result", data);
 });

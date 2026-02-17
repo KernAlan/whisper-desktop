@@ -4,7 +4,7 @@
   "main": "src/main/main.js",
   "scripts": {
     "dev": "electron .",
-    "start": "electron .",
+    "start": "node cli.js",
     "build": "electron-builder",
     "test": "node --test test/*.test.js",
     "check": "node --check src/main/main.js && node --check src/preload/preload.js"

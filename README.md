@@ -13,6 +13,8 @@ Tl;dr With the magic that is Whisper and the speed of the Groq servers, I though
 - Automatic microphone selection with device change detection
 - Transcription using Groq Whisper models (fast default with fallback)
 - Automatic insertion of transcribed text into the active text input field
+- Audio recovery — failed recordings are saved instead of deleted
+- Chunked transcription — large recordings (>20MB) are auto-split to stay under the API size limit
 - Terminal CLI for runtime configuration and diagnostics
 - One-shot CLI commands for scripting and automation
 
@@ -80,6 +82,8 @@ whisper> help
   test mic                   Test microphone levels
   devices                    List audio inputs
   perf                       Performance stats
+  recovery                   List saved recordings
+  retry <filename>           Re-transcribe a recovery file
   quit                       Exit
 ```
 
@@ -94,6 +98,23 @@ node cli.js refresh mic
 ```
 
 This works from scripts, Stream Deck buttons, or any automation tool.
+
+### Audio Recovery
+
+If a transcription fails (network error, timeout, API limit), the audio is saved to a recovery folder instead of being deleted. Recordings over 20MB are automatically split into chunks before sending to the API.
+
+To list and retry saved recordings:
+
+```
+whisper> recovery
+  recording-2026-02-16T15-30-00.webm  4.2MB  2026-02-16 15:30:00
+
+whisper> retry recording-2026-02-16T15-30-00.webm
+  Transcription (342 chars):
+  ...
+```
+
+The recovery folder is capped at 10 files. Oldest files are pruned automatically.
 
 ### Terminal Diagnostics
 

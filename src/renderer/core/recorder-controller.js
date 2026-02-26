@@ -117,6 +117,8 @@ export class RecorderController {
     let restoreMs = 0;
     let clipboardRestoreMode = "unknown";
     let bytes = 0;
+    let transcript = null;
+    let pasteOk = null;
 
     try {
       this.stateMachine.transition(STATES.TRANSCRIBING, "Transcribing");
@@ -134,7 +136,6 @@ export class RecorderController {
       }
 
       const transcribeStartedAt = Date.now();
-      let transcript;
 
       if (bytes > CHUNK_SIZE_LIMIT && this.transcribeAudioChunked) {
         // Split audioChunks into groups that each stay under the size limit
@@ -173,6 +174,7 @@ export class RecorderController {
       }
       const pasteResult = await this.simulateTyping(transcript);
       const ok = typeof pasteResult === "boolean" ? pasteResult : !!pasteResult?.ok;
+      pasteOk = ok;
       pasteMs = Number(pasteResult?.pasteMs || 0);
       restoreMs = Number(pasteResult?.restoreMs || 0);
       clipboardRestoreMode = pasteResult?.restoreMode || "unknown";
@@ -199,6 +201,8 @@ export class RecorderController {
         restoreMs,
         clipboardRestoreMode,
         bytes,
+        transcript,
+        pasteOk,
       });
     }
   }

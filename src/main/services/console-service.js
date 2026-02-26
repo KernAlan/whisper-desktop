@@ -64,6 +64,8 @@ class ConsoleService {
     });
 
     this._server.listen(pipeName);
+
+    this.diagnostics.setTranscriptListener((entry) => this._pushTranscript(entry));
   }
 
   _send(text) {
@@ -85,6 +87,15 @@ class ConsoleService {
     this._sendLine("");
   }
 
+  _pushTranscript(entry) {
+    if (!this._conn || this._conn.destroyed || this._oneshot) return;
+    const paste = entry.pasteOk === true ? "ok" : entry.pasteOk === false ? "FAIL" : "n/a";
+    const preview = entry.text.length > 60
+      ? entry.text.slice(0, 57) + "..."
+      : entry.text;
+    this._send(`\n  [transcript] ${entry.text.length} chars | paste: ${paste} | ${preview}\n`);
+  }
+
   setMainWindow(win) {
     this.mainWindow = win;
   }
@@ -103,6 +114,8 @@ class ConsoleService {
     if (cmd === "set") return this._cmdSet(parts.slice(1));
     if (cmd === "refresh" && parts[1]?.toLowerCase() === "mic") return this._cmdRefreshMic();
     if (cmd === "test" && parts[1]?.toLowerCase() === "mic") return this._cmdTestMic();
+    if (cmd === "last") return this._cmdLast(parts.slice(1));
+    if (cmd === "history") return this._cmdHistory();
     if (cmd === "recovery") return this._cmdRecovery();
     if (cmd === "retry") return this._cmdRetry(parts.slice(1));
 
@@ -125,6 +138,8 @@ class ConsoleService {
       kv("test mic", "Test microphone levels"),
       kv("devices", "List audio inputs"),
       kv("perf", "Performance stats"),
+      kv("last [n]", "Show last N transcriptions (default 1)"),
+      kv("history", "List recent transcriptions"),
       kv("recovery", "List saved recordings"),
       kv("retry <filename>", "Re-transcribe a recovery file"),
       kv("quit", "Exit"),
@@ -273,6 +288,44 @@ class ConsoleService {
     }
     this._sendLine("  Requesting device list...");
     this.mainWindow.webContents.send("list-devices");
+  }
+
+  _cmdLast(args) {
+    const n = Math.max(1, Math.min(50, Number(args[0]) || 1));
+    const entries = this.diagnostics.getTranscriptHistory(n);
+    if (!entries.length) {
+      this._sendLine("  No transcriptions yet.");
+      return;
+    }
+    this._sendLine("");
+    for (const entry of entries) {
+      const date = new Date(entry.timestamp).toLocaleTimeString();
+      const paste = entry.pasteOk === true ? "ok" : entry.pasteOk === false ? "FAIL" : "n/a";
+      this._sendLine(`  [${date}] (${entry.text.length} chars, paste: ${paste})`);
+      this._sendLine(`  ${entry.text}`);
+      this._sendLine("");
+    }
+  }
+
+  _cmdHistory() {
+    const entries = this.diagnostics.getTranscriptHistory();
+    if (!entries.length) {
+      this._sendLine("  No transcriptions yet.");
+      return;
+    }
+    this._sendLine("");
+    this._sendLine(`  Transcriptions (${entries.length}):`);
+    for (const entry of entries) {
+      const date = new Date(entry.timestamp).toLocaleTimeString();
+      const paste = entry.pasteOk === true ? "ok" : entry.pasteOk === false ? "FAIL" : "n/a";
+      const preview = entry.text.length > 60
+        ? entry.text.slice(0, 57) + "..."
+        : entry.text;
+      this._sendLine(`  ${date}  ${String(entry.text.length).padStart(5)} chars  paste: ${paste.padEnd(4)}  ${preview}`);
+    }
+    this._sendLine("");
+    this._sendLine('  Use "last [n]" to see full text.');
+    this._sendLine("");
   }
 
   async _cmdRecovery() {

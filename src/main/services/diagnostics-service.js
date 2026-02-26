@@ -12,6 +12,8 @@ class DiagnosticsService {
     this.preprocessSamples = [];
     this.pasteSamples = [];
     this.summaryEvery = 10;
+    this.transcriptHistory = [];
+    this._transcriptListener = null;
   }
 
   printStartup({ logFilePath = "", appVersion = "" } = {}) {
@@ -80,6 +82,28 @@ class DiagnosticsService {
       if (Number.isFinite(payload.pasteMs)) {
         this.pasteSamples.push(Number(payload.pasteMs));
       }
+
+      if (payload.transcript && typeof payload.transcript === "string") {
+        const entry = {
+          text: payload.transcript,
+          timestamp: Date.now(),
+          durationMs: payload.transcribeMs || 0,
+          bytes: payload.bytes || 0,
+          pasteOk: payload.pasteOk,
+        };
+        this.transcriptHistory.push(entry);
+        if (this.transcriptHistory.length > 50) {
+          this.transcriptHistory.shift();
+        }
+        const preview = payload.transcript.length > 80
+          ? payload.transcript.slice(0, 77) + "..."
+          : payload.transcript;
+        this.logger.log(`[Transcript] (${payload.transcript.length} chars) ${preview}`);
+        if (this._transcriptListener) {
+          try { this._transcriptListener(entry); } catch (_) { /* ignore */ }
+        }
+      }
+
       this.maybePrintPerfSummary();
       return;
     }
@@ -135,6 +159,15 @@ class DiagnosticsService {
     const sorted = values.slice().sort((a, b) => a - b);
     const idx = Math.max(0, Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1));
     return sorted[idx];
+  }
+
+  getTranscriptHistory(n) {
+    if (!n || n >= this.transcriptHistory.length) return this.transcriptHistory.slice();
+    return this.transcriptHistory.slice(-n);
+  }
+
+  setTranscriptListener(fn) {
+    this._transcriptListener = typeof fn === "function" ? fn : null;
   }
 
   maybePrintPerfSummary() {

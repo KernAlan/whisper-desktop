@@ -2,16 +2,24 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("electronAPI", {
   onToggleRecording: (callback) => {
-    ipcRenderer.on("toggle-recording", () => callback());
+    ipcRenderer.on("toggle-recording", (_event, payload) => callback(payload));
   },
   transcribeAudio: (arrayBuffer) => ipcRenderer.invoke("transcribe-audio", arrayBuffer),
+  transcribePreview: (arrayBuffer) => ipcRenderer.invoke("transcribe-preview", arrayBuffer),
   transcribeAudioChunked: (arrayBuffers) => ipcRenderer.invoke("transcribe-audio-chunked", arrayBuffers),
   hideWindow: () => ipcRenderer.invoke("hide-window"),
+  scheduleHideWindow: (delayMs) => ipcRenderer.invoke("schedule-hide-window", delayMs),
+  cancelHideWindow: () => ipcRenderer.invoke("cancel-hide-window"),
   simulateTyping: (text) => ipcRenderer.invoke("simulate-typing", text),
+  captureSelectedText: () => ipcRenderer.invoke("capture-selected-text"),
+  processCommand: (payload) => ipcRenderer.invoke("process-command", payload),
   requestMicrophoneAccess: () =>
     ipcRenderer.invoke("request-microphone-access"),
   getRuntimeConfig: () => ipcRenderer.invoke("get-runtime-config"),
   updateRuntimeSettings: (settings) => ipcRenderer.invoke("update-runtime-settings", settings),
+  listDictionary: () => ipcRenderer.invoke("dictionary-list"),
+  addDictionaryTerm: (term) => ipcRenderer.invoke("dictionary-add", term),
+  removeDictionaryTerm: (term) => ipcRenderer.invoke("dictionary-remove", term),
   sendDiagnostics: (payload) => ipcRenderer.send("renderer-diagnostics", payload),
   onRefreshMic: (callback) => {
     ipcRenderer.on("refresh-mic", () => callback());

@@ -100,6 +100,51 @@ class TypingService {
       };
     }
   }
+
+  async captureSelectedText() {
+    let clipboardSnapshot = null;
+
+    try {
+      clipboardSnapshot = clipboard.availableFormats().map((format) => ({
+        format,
+        data: clipboard.readBuffer(format),
+      }));
+
+      clipboard.clear();
+      if (process.platform === "darwin") {
+        await execFileAsync("osascript", [
+          "-e",
+          'tell application "System Events" to keystroke "c" using command down',
+        ]);
+      } else if (process.platform === "win32") {
+        await execFileAsync("powershell.exe", [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "$ws = New-Object -ComObject WScript.Shell; $ws.SendKeys('^c')",
+        ]);
+      } else {
+        await ks.sendCombination(["control", "c"]);
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      return clipboard.readText() || "";
+    } catch (error) {
+      this.logger.warn("Failed to capture selected text:", error);
+      return "";
+    } finally {
+      if (clipboardSnapshot && this.restoreMode !== "off") {
+        try {
+          clipboard.clear();
+          clipboardSnapshot.forEach(({ format, data }) => {
+            clipboard.writeBuffer(format, data);
+          });
+        } catch (restoreError) {
+          this.logger.warn("Failed to restore clipboard after copy:", restoreError);
+        }
+      }
+    }
+  }
 }
 
 module.exports = {

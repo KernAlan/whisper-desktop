@@ -4,45 +4,123 @@
         <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'">
         <title>Whisper Desktop</title>
         <style>
+            :root {
+                --ink: #171614;
+                --muted: #645f56;
+                --paper: rgba(250, 247, 239, 0.92);
+                --line: rgba(23, 22, 20, 0.14);
+                --recording: #b3261e;
+                --working: #2f5f6f;
+                --done: #2f6b3f;
+                --accent: #d18a00;
+            }
             body {
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
-                background-color: rgba(255, 255, 255, 0.8);
-                color: #333;
+                font-family: "Aptos", "Segoe UI", sans-serif;
+                background-color: var(--paper);
+                color: var(--ink);
                 margin: 0;
-                padding: 20px;
-                border-radius: 10px;
-                box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-                backdrop-filter: blur(10px);
-                -webkit-backdrop-filter: blur(10px);
+                padding: 18px;
+                border: 1px solid rgba(255, 255, 255, 0.55);
+                border-radius: 8px;
+                box-shadow: 0 18px 42px rgba(0, 0, 0, 0.18);
+                backdrop-filter: blur(18px) saturate(1.15);
+                -webkit-backdrop-filter: blur(18px) saturate(1.15);
                 user-select: none;
                 -webkit-user-select: none;
                 -webkit-app-region: drag;
             }
-            h1 {
-                font-size: 18px;
+            .topline {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 14px;
                 margin-bottom: 10px;
+            }
+            h1 {
+                font-size: 17px;
+                line-height: 1.15;
+                margin: 0;
+                letter-spacing: 0;
             }
             p {
                 font-size: 12px;
-                color: #666;
-                margin-bottom: 15px;
+                color: var(--muted);
+                margin: 0 0 12px;
+            }
+            #modeChip {
+                border: 1px solid var(--line);
+                border-radius: 999px;
+                color: var(--muted);
+                font-size: 11px;
+                font-weight: 700;
+                letter-spacing: 0;
+                padding: 4px 8px;
+                white-space: nowrap;
             }
             #status {
                 font-size: 14px;
                 font-weight: bold;
-                margin-bottom: 15px;
+                margin-bottom: 10px;
             }
             #runtimeInfo {
                 font-size: 11px;
-                color: #444;
-                margin-bottom: 10px;
+                color: var(--muted);
+                margin-top: 10px;
+                overflow-wrap: anywhere;
+            }
+            #previewPanel {
+                background: rgba(255, 255, 255, 0.52);
+                border: 1px solid var(--line);
+                border-radius: 7px;
+                min-height: 82px;
+                max-height: 180px;
+                overflow: hidden;
+                padding: 10px;
+            }
+            #previewMeta {
+                color: var(--muted);
+                font-size: 10px;
+                font-weight: 700;
+                letter-spacing: 0.04em;
+                margin-bottom: 7px;
+                text-transform: uppercase;
+            }
+            #previewText {
+                color: var(--ink);
+                font-size: 13px;
+                line-height: 1.38;
+                max-height: 116px;
+                overflow: hidden;
+                white-space: pre-wrap;
+                overflow-wrap: anywhere;
+            }
+            #selectedText {
+                border-left: 3px solid var(--accent);
+                color: var(--muted);
+                display: none;
+                font-size: 11px;
+                line-height: 1.35;
+                margin: 8px 0 10px;
+                max-height: 42px;
+                overflow: hidden;
+                padding-left: 8px;
+                white-space: pre-wrap;
+                overflow-wrap: anywhere;
             }
         </style>
     </head>
 <body>
-    <h1>Whisper Desktop</h1>
+    <div class="topline">
+        <h1>Whisper Desktop</h1>
+        <div id="modeChip">Dictation</div>
+    </div>
     <p id="hotkeyHint">Press shortcut to start/stop recording</p>
     <div id="status">Ready</div>
+    <div id="selectedText"></div>
+    <div id="previewPanel">
+        <div id="previewMeta">Preview</div>
+        <div id="previewText">Waiting for speech.</div>
+    </div>
     <div id="runtimeInfo">Loading runtime config...</div>
     <script src="./src/renderer/init.js"></script>
 </body>

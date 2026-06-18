@@ -20,6 +20,7 @@ class TranscriptionService {
     fallbackModel,
     timeoutMs,
     maxQueue,
+    dictionaryService,
     logger,
     onMetric,
     recoveryDir,
@@ -29,10 +30,12 @@ class TranscriptionService {
     this.fallbackModel = fallbackModel;
     this.timeoutMs = timeoutMs;
     this.maxQueue = maxQueue;
+    this.dictionaryService = dictionaryService;
     this.logger = logger || console;
     this.onMetric = typeof onMetric === "function" ? onMetric : () => {};
     this.groq = new Groq({ apiKey });
     this.active = false;
+    this.previewActive = false;
     this.queue = [];
     this.recoveryDir = recoveryDir || path.join(os.tmpdir(), "whisper-desktop-recovery");
   }
@@ -96,6 +99,27 @@ class TranscriptionService {
     }
   }
 
+  async transcribePreview(arrayBuffer) {
+    if (this.active || this.previewActive || this.queue.length > 0) {
+      return { skipped: true, text: "" };
+    }
+
+    this.previewActive = true;
+    const tempFilePath = path.join(
+      os.tmpdir(),
+      `preview_audio_${Date.now()}_${Math.random().toString(36).slice(2)}.webm`
+    );
+
+    try {
+      await fs.writeFile(tempFilePath, Buffer.from(arrayBuffer));
+      const result = await this._transcribeOne(tempFilePath);
+      return { skipped: false, text: result.text };
+    } finally {
+      this.previewActive = false;
+      await fs.unlink(tempFilePath).catch(() => {});
+    }
+  }
+
   async _transcribeOne(tempFilePath) {
     if (!this.apiKey) throw new Error("Missing GROQ_API_KEY in environment");
 
@@ -109,6 +133,7 @@ class TranscriptionService {
           file: primaryStream,
           model: this.model,
           response_format: "text",
+          prompt: this.dictionaryService?.buildPrompt?.() || undefined,
         }),
         this.timeoutMs,
         `Transcription timed out after ${this.timeoutMs}ms`
@@ -127,6 +152,7 @@ class TranscriptionService {
           file: fallbackStream,
           model: this.fallbackModel,
           response_format: "text",
+          prompt: this.dictionaryService?.buildPrompt?.() || undefined,
         }),
         this.timeoutMs,
         `Fallback transcription timed out after ${this.timeoutMs}ms`

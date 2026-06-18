@@ -9,9 +9,12 @@ Tl;dr With the magic that is Whisper and the speed of the Groq servers, I though
 ## Features
 
 - Global hotkey (Ctrl+Shift+Space) to start/stop recording
+- Command hotkey (Ctrl+Shift+E) to rewrite selected text by voice
 - Real-time audio recording using the system microphone
+- Rolling live transcript preview while recording
 - Automatic microphone selection with device change detection
 - Transcription using Groq Whisper models (fast default with fallback)
+- Local custom dictionary to bias transcription toward your names and jargon
 - Automatic insertion of transcribed text into the active text input field
 - Audio recovery — failed recordings are saved instead of deleted
 - Chunked transcription — large recordings (>20MB) are auto-split to stay under the API size limit
@@ -38,8 +41,11 @@ Tl;dr With the magic that is Whisper and the speed of the Groq servers, I though
    GROQ_API_KEY=your_api_key_here
    # Optional (defaults shown)
    APP_HOTKEY=CommandOrControl+Shift+Space
+   APP_COMMAND_HOTKEY=CommandOrControl+Shift+E
    APP_HIDE_WINDOW_MS=5000
+   APP_DONE_HIDE_WINDOW_MS=900
    APP_MEDIARECORDER_TIMESLICE_MS=150
+   APP_PREVIEW_INTERVAL_MS=2500
    APP_CLIPBOARD_RESTORE_MODE=deferred
    APP_CLIPBOARD_RESTORE_DELAY_MS=120
    APP_LOG_FILE=logs/app.log
@@ -48,6 +54,8 @@ Tl;dr With the magic that is Whisper and the speed of the Groq servers, I though
    GROQ_FALLBACK_TRANSCRIPTION_MODEL=whisper-large-v3
    GROQ_TRANSCRIPTION_TIMEOUT_MS=25000
    GROQ_TRANSCRIPTION_MAX_QUEUE=2
+   GROQ_TEXT_MODEL=llama-3.1-8b-instant
+   GROQ_TEXT_TIMEOUT_MS=20000
    ```
 
    To obtain your Groq API key, visit [https://console.groq.com/keys](https://console.groq.com/keys).
@@ -65,6 +73,47 @@ Tl;dr With the magic that is Whisper and the speed of the Groq servers, I though
 4. Press `Ctrl+Shift+Space` again to stop recording and initiate transcription
 5. The transcribed text will be automatically inserted into the active text input field
 
+### Trying It Locally
+
+Once the app is running, you can check that the hotkeys and models loaded:
+
+```
+node cli.js status
+```
+
+Then put your cursor in any text field and try:
+
+- `Ctrl+Shift+Space` to dictate
+- `Ctrl+Shift+E` to edit selected text by voice
+
+To shut it down from the terminal:
+
+```
+node cli.js quit
+```
+
+### Command Mode
+
+1. Select text in any app
+2. Press `Ctrl+Shift+E` (or `Cmd+Shift+E` on macOS)
+3. Say an instruction like "make this shorter" or "turn this into bullets"
+4. Press the command hotkey again to stop
+5. The selected text is replaced with the rewritten result
+
+This uses the text model configured by `GROQ_TEXT_MODEL`.
+
+### Dictionary
+
+If Whisper keeps getting a name, acronym, or product term wrong, add it to the local dictionary:
+
+```
+node cli.js dict add KernAlan
+node cli.js dict
+node cli.js dict remove KernAlan
+```
+
+Dictionary terms are stored locally and used as hints during transcription and command mode.
+
 ### CLI
 
 `npm start` launches an interactive console where you can configure the app at runtime:
@@ -73,15 +122,23 @@ Tl;dr With the magic that is Whisper and the speed of the Groq servers, I though
 whisper> help
   status                     Show current config
   set model <name>           Change transcription model
+  set text-model <name>      Change command-mode text model
   set hotkey <combo>         Change global shortcut
+  set command-hotkey <combo> Change command-mode shortcut
   set injection <mode>       deferred | blocking | off
   set profile <name>         fast | balanced
   set timeslice <ms>         Recorder timeslice (min 50)
+  set preview <ms>           Live preview interval (min 1000)
   set restore-delay <ms>     Clipboard restore delay
   refresh mic                Refresh microphone
   test mic                   Test microphone levels
   devices                    List audio inputs
   perf                       Performance stats
+  last [n]                   Show last N transcriptions (default 1)
+  history                    List recent transcriptions
+  dict                       List dictionary terms
+  dict add <term>            Add a dictionary term
+  dict remove <term>         Remove a dictionary term
   recovery                   List saved recordings
   retry <filename>           Re-transcribe a recovery file
   quit                       Exit
@@ -93,6 +150,7 @@ You can also send one-shot commands to a running instance:
 node cli.js status
 node cli.js set model whisper-large-v3
 node cli.js set hotkey Ctrl+Shift+Z
+node cli.js dict add KernAlan
 node cli.js perf
 node cli.js refresh mic
 ```
@@ -151,6 +209,8 @@ The main components of the application are:
 - `src/main/main.js`: Main process orchestration + IPC wiring
 - `src/main/services/console-service.js`: Named pipe server for CLI commands
 - `src/main/services/transcription-service.js`: queue/timeout/fallback transcription pipeline
+- `src/main/services/text-processing-service.js`: command-mode rewrite pipeline
+- `src/main/services/dictionary-service.js`: persistent custom dictionary
 - `src/main/services/typing-service.js`: paste injection with clipboard restore
 - `src/main/services/diagnostics-service.js`: startup and runtime terminal diagnostics
 - `src/main/ui/window-manager.js`: app window/menu management
@@ -195,7 +255,6 @@ If you encounter any issues with audio recording or transcription:
 The following are ideas for future development:
 
 - Allow for using different providers (e.g. OpenAI or self-host)
-- Include post-processing capability using LLM providers
 - Make the UI more customizable
 - Add a feature to save and manage transcription history
 - Develop a mobile companion app for remote control and syncing

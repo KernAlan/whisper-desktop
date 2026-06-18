@@ -7,32 +7,55 @@ export class RecorderController {
     audioEngine,
     minRecordingDurationMs,
     mediaRecorderTimesliceMs,
+    doneHideWindowMs = 900,
     hideWindow,
+    scheduleHideWindow,
+    cancelHideWindow,
     focusRestoreDelayMs = 120,
     requestMicrophoneAccess,
     transcribeAudio,
     transcribeAudioChunked,
+    transcribePreview,
+    processCommand,
     simulateTyping,
     updateStatus,
+    updatePreview,
     onDiagnostics,
   }) {
     this.audioEngine = audioEngine;
     this.minRecordingDurationMs = minRecordingDurationMs;
     this.mediaRecorderTimesliceMs = mediaRecorderTimesliceMs;
+    this.doneHideWindowMs = doneHideWindowMs;
     this.hideWindow = typeof hideWindow === "function" ? hideWindow : null;
+    this.scheduleHideWindow = typeof scheduleHideWindow === "function" ? scheduleHideWindow : null;
+    this.cancelHideWindow = typeof cancelHideWindow === "function" ? cancelHideWindow : null;
     this.focusRestoreDelayMs = focusRestoreDelayMs;
     this.requestMicrophoneAccess = requestMicrophoneAccess;
     this.transcribeAudio = transcribeAudio;
     this.transcribeAudioChunked = transcribeAudioChunked;
+    this.transcribePreview = transcribePreview;
+    this.processCommand = processCommand;
     this.simulateTyping = simulateTyping;
     this.updateStatus = updateStatus;
+    this.updatePreview = typeof updatePreview === "function" ? updatePreview : () => {};
     this.onDiagnostics = typeof onDiagnostics === "function" ? onDiagnostics : () => {};
 
     this.mediaRecorder = null;
     this.audioChunks = [];
+    this.mode = "dictation";
+    this.selectedText = "";
+    this.previewIntervalMs = 2500;
+    this.previewTimer = null;
+    this.previewRequestActive = false;
     this.stateMachine = new RecorderStateMachine(({ next, detail }) => {
       if (next === STATES.ERROR) this.updateStatus(detail || "Error", "red");
     });
+  }
+
+  setPreviewIntervalMs(value) {
+    if (Number.isFinite(value) && value >= 1000) {
+      this.previewIntervalMs = value;
+    }
   }
 
   getState() {
@@ -48,7 +71,7 @@ export class RecorderController {
     this.stateMachine.transition(STATES.IDLE, "Ready");
   }
 
-  async toggleRecording() {
+  async toggleRecording(options = {}) {
     const state = this.getState();
     if (state === STATES.RECORDING) {
       return this.stopRecording();
@@ -58,11 +81,16 @@ export class RecorderController {
       return;
     }
 
-    return this.startRecording();
+    return this.startRecording(options);
   }
 
-  async startRecording() {
+  async startRecording({ mode = "dictation", selectedText = "" } = {}) {
     try {
+      this.mode = mode === "command" ? "command" : "dictation";
+      this.selectedText = String(selectedText || "");
+      if (this.cancelHideWindow) {
+        await this.cancelHideWindow();
+      }
       this.stateMachine.transition(STATES.ARMING, "Preparing recording");
       const stream = await this.audioEngine.ensureStream();
       this.mediaRecorder = new MediaRecorder(stream);
@@ -76,7 +104,13 @@ export class RecorderController {
       };
       this.mediaRecorder.start(this.mediaRecorderTimesliceMs);
       this.stateMachine.transition(STATES.RECORDING, "Recording");
-      this.updateStatus("Recording...", "red");
+      this.updateStatus(this.mode === "command" ? "Recording command..." : "Recording...", "red");
+      this.updatePreview("", {
+        mode: this.mode,
+        phase: "recording",
+        selectedText: this.selectedText,
+      });
+      this.startPreviewLoop();
       this.watchAudioLevels();
     } catch (error) {
       console.error("Error starting recording:", error);
@@ -86,6 +120,7 @@ export class RecorderController {
 
   stopRecording() {
     if (!this.mediaRecorder || this.mediaRecorder.state === "inactive") return false;
+    this.stopPreviewLoop();
     setTimeout(() => {
       if (typeof this.mediaRecorder.requestData === "function") {
         try {
@@ -98,6 +133,47 @@ export class RecorderController {
       this.updateStatus("Processing...", "blue");
     }, this.minRecordingDurationMs);
     return true;
+  }
+
+  startPreviewLoop() {
+    this.stopPreviewLoop();
+    if (!this.transcribePreview) return;
+    this.previewTimer = setInterval(() => {
+      this.runPreviewTranscription().catch((error) => {
+        console.warn("Preview transcription failed:", error);
+      });
+    }, this.previewIntervalMs);
+  }
+
+  stopPreviewLoop() {
+    if (this.previewTimer) {
+      clearInterval(this.previewTimer);
+      this.previewTimer = null;
+    }
+  }
+
+  async runPreviewTranscription() {
+    if (this.getState() !== STATES.RECORDING || this.previewRequestActive) return;
+    if (!this.audioChunks.length) return;
+
+    this.previewRequestActive = true;
+    const mode = this.mode;
+    try {
+      const audioBlob = new Blob(this.audioChunks, { type: "audio/webm" });
+      if (audioBlob.size < 1000) return;
+      const arrayBuffer = await audioBlob.arrayBuffer();
+      const result = await this.transcribePreview(arrayBuffer);
+      if (this.getState() !== STATES.RECORDING || mode !== this.mode) return;
+      if (!result?.skipped && result?.text) {
+        this.updatePreview(result.text, {
+          mode,
+          phase: "preview",
+          selectedText: this.selectedText,
+        });
+      }
+    } finally {
+      this.previewRequestActive = false;
+    }
   }
 
   watchAudioLevels() {
@@ -162,8 +238,32 @@ export class RecorderController {
         return;
       }
 
+      this.updatePreview(transcript, {
+        mode: this.mode,
+        phase: "final",
+        selectedText: this.selectedText,
+      });
       this.stateMachine.transition(STATES.PASTING, "Injecting text");
-      this.updateStatus("Inserting text...", "green");
+      this.updateStatus(this.mode === "command" ? "Applying command..." : "Inserting text...", "green");
+
+      let textToPaste = transcript;
+      if (this.mode === "command") {
+        textToPaste = await this.processCommand({
+          selectedText: this.selectedText,
+          instruction: transcript,
+        });
+        if (!textToPaste || !textToPaste.trim()) {
+          this.updateStatus("Command returned no text", "red");
+          this.stateMachine.transition(STATES.IDLE, "Empty command result");
+          return;
+        }
+        this.updatePreview(textToPaste, {
+          mode: this.mode,
+          phase: "result",
+          selectedText: this.selectedText,
+        });
+      }
+
       if (this.hideWindow) {
         try {
           await this.hideWindow();
@@ -172,7 +272,7 @@ export class RecorderController {
           // Ignore hide/focus handoff failures and still attempt paste.
         }
       }
-      const pasteResult = await this.simulateTyping(transcript);
+      const pasteResult = await this.simulateTyping(textToPaste);
       const ok = typeof pasteResult === "boolean" ? pasteResult : !!pasteResult?.ok;
       pasteOk = ok;
       pasteMs = Number(pasteResult?.pasteMs || 0);
@@ -192,6 +292,12 @@ export class RecorderController {
       this.stateMachine.transition(STATES.ERROR, "Error processing audio");
     } finally {
       this.audioChunks = [];
+      this.stopPreviewLoop();
+      if (this.scheduleHideWindow) {
+        this.scheduleHideWindow(this.doneHideWindowMs).catch((error) => {
+          console.warn("Failed to schedule window hide:", error);
+        });
+      }
       this.onDiagnostics({
         type: "pipeline-latency",
         totalMs: Date.now() - pipelineStartedAt,
@@ -201,7 +307,9 @@ export class RecorderController {
         restoreMs,
         clipboardRestoreMode,
         bytes,
-        transcript,
+        transcript: this.mode === "command" ? null : transcript,
+        commandInstruction: this.mode === "command" ? transcript : null,
+        commandSelectedChars: this.mode === "command" ? this.selectedText.length : null,
         pasteOk,
       });
     }

@@ -14,7 +14,13 @@ function updateStatus(message, color) {
   const statusElement = document.getElementById("status");
   if (!statusElement) return;
   statusElement.textContent = message;
-  statusElement.style.color = color;
+  const colors = {
+    red: "var(--recording)",
+    blue: "var(--working)",
+    green: "var(--done)",
+    black: "var(--ink)",
+  };
+  statusElement.style.color = colors[color] || color;
 }
 
 function sendDiagnostics(payload) {
@@ -38,10 +44,56 @@ function renderRuntimeConfig(config) {
   const runtimeInfo = document.getElementById("runtimeInfo");
   const hotkeyHint = document.getElementById("hotkeyHint");
   if (runtimeInfo) {
-    runtimeInfo.textContent = `Model: ${config.model} | Timeout: ${config.timeoutMs}ms | Queue: ${config.maxQueue} | Slice: ${config.recorderTimesliceMs}ms`;
+    runtimeInfo.textContent = `ASR: ${config.model} | Text: ${config.textModel} | Preview: ${config.previewIntervalMs}ms | Dictionary: ${(config.dictionaryTerms || []).length}`;
   }
   if (hotkeyHint) {
-    hotkeyHint.textContent = `Press ${platformShortcutDisplay(config.shortcut)} to start/stop recording`;
+    hotkeyHint.textContent = `${platformShortcutDisplay(config.shortcut)} dictates | ${platformShortcutDisplay(config.commandShortcut)} edits selection`;
+  }
+}
+
+function renderMode(mode) {
+  const chip = document.getElementById("modeChip");
+  if (!chip) return;
+  chip.textContent = mode === "command" ? "Command" : "Dictation";
+}
+
+function truncateMiddle(text, maxLength) {
+  if (!text || text.length <= maxLength) return text || "";
+  return `${text.slice(0, Math.floor(maxLength / 2))} ... ${text.slice(-Math.floor(maxLength / 2))}`;
+}
+
+function updatePreview(text, { mode = "dictation", phase = "preview", selectedText = "" } = {}) {
+  renderMode(mode);
+  const previewMeta = document.getElementById("previewMeta");
+  const previewText = document.getElementById("previewText");
+  const selectedElement = document.getElementById("selectedText");
+
+  if (selectedElement) {
+    const shouldShowSelection = mode === "command" && selectedText;
+    selectedElement.style.display = shouldShowSelection ? "block" : "none";
+    selectedElement.textContent = shouldShowSelection
+      ? `Selected: ${truncateMiddle(selectedText, 180)}`
+      : "";
+  }
+
+  if (previewMeta) {
+    const labels = {
+      recording: mode === "command" ? "Listening for command" : "Listening",
+      preview: mode === "command" ? "Command preview" : "Live preview",
+      final: mode === "command" ? "Command heard" : "Final transcript",
+      result: "Rewrite result",
+    };
+    previewMeta.textContent = labels[phase] || "Preview";
+  }
+
+  if (previewText) {
+    if (text && text.trim()) {
+      previewText.textContent = text.trim();
+    } else if (phase === "recording") {
+      previewText.textContent = "Listening...";
+    } else {
+      previewText.textContent = "Waiting for speech.";
+    }
   }
 }
 
@@ -116,15 +168,22 @@ async function boot() {
     audioEngine,
     minRecordingDurationMs: MIN_RECORDING_DURATION_MS,
     mediaRecorderTimesliceMs: runtimeConfig.recorderTimesliceMs || 150,
+    doneHideWindowMs: runtimeConfig.doneHideWindowMs || 900,
     hideWindow: isMac ? () => window.electronAPI.hideWindow() : null,
+    scheduleHideWindow: (delayMs) => window.electronAPI.scheduleHideWindow(delayMs),
+    cancelHideWindow: () => window.electronAPI.cancelHideWindow(),
     focusRestoreDelayMs: isMac ? 180 : 60,
     requestMicrophoneAccess: () => window.electronAPI.requestMicrophoneAccess(),
     transcribeAudio: (arrayBuffer) => window.electronAPI.transcribeAudio(arrayBuffer),
+    transcribePreview: (arrayBuffer) => window.electronAPI.transcribePreview(arrayBuffer),
     transcribeAudioChunked: (arrayBuffers) => window.electronAPI.transcribeAudioChunked(arrayBuffers),
+    processCommand: (payload) => window.electronAPI.processCommand(payload),
     simulateTyping: (text) => window.electronAPI.simulateTyping(text),
     updateStatus,
+    updatePreview,
     onDiagnostics: sendDiagnostics,
   });
+  controller.setPreviewIntervalMs(runtimeConfig.previewIntervalMs);
 
   try {
     await controller.initialize();
@@ -145,8 +204,8 @@ async function boot() {
     });
   }
 
-  window.electronAPI.onToggleRecording(() => {
-    controller.toggleRecording().catch((error) => {
+  window.electronAPI.onToggleRecording((payload = {}) => {
+    controller.toggleRecording(payload).catch((error) => {
       console.error("Toggle failed:", error);
       updateStatus("Toggle failed", "red");
     });

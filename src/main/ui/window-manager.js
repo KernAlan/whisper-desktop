@@ -5,13 +5,14 @@ class WindowManager {
   constructor({ hideWindowMs }) {
     this.hideWindowMs = hideWindowMs;
     this.mainWindow = null;
+    this.hideTimer = null;
   }
 
   createMainWindow() {
     const preloadPath = path.join(__dirname, "..", "..", "preload", "preload.js");
     this.mainWindow = new BrowserWindow({
       width: 360,
-      height: 220,
+      height: 300,
       show: false,
       frame: false,
       transparent: true,
@@ -49,15 +50,31 @@ class WindowManager {
     Menu.setApplicationMenu(Menu.buildFromTemplate(template));
   }
 
-  showWindow() {
+  showWindow({ autoHide = true } = {}) {
     if (!this.mainWindow) return;
+    this.cancelHide();
     const { workArea } = screen.getPrimaryDisplay();
-    this.mainWindow.setPosition(workArea.x + workArea.width - 380, workArea.y + workArea.height - 240);
+    this.mainWindow.setPosition(workArea.x + workArea.width - 380, workArea.y + workArea.height - 320);
     this.mainWindow.showInactive();
-    setTimeout(() => this.hideWindow(), this.hideWindowMs);
+    if (autoHide) {
+      this.scheduleHide();
+    }
+  }
+
+  scheduleHide(delayMs = this.hideWindowMs) {
+    this.cancelHide();
+    this.hideTimer = setTimeout(() => this.hideWindow(), delayMs);
+  }
+
+  cancelHide() {
+    if (this.hideTimer) {
+      clearTimeout(this.hideTimer);
+      this.hideTimer = null;
+    }
   }
 
   hideWindow() {
+    this.cancelHide();
     this.mainWindow?.hide();
   }
 

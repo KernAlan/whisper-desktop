@@ -1,7 +1,7 @@
 const net = require("net");
 
 class ConsoleService {
-  constructor({ runtimeSettings, applySettings, setupShortcut, diagnostics, logger, mainWindow, app, transcriptionService }) {
+  constructor({ runtimeSettings, applySettings, setupShortcut, diagnostics, logger, mainWindow, app, transcriptionService, dictionaryService }) {
     this.runtimeSettings = runtimeSettings;
     this.applySettings = applySettings;
     this.setupShortcut = setupShortcut;
@@ -10,6 +10,7 @@ class ConsoleService {
     this.mainWindow = mainWindow;
     this.app = app;
     this.transcriptionService = transcriptionService;
+    this.dictionaryService = dictionaryService;
     this._conn = null;
     this._buffer = "";
     this._oneshot = false;
@@ -118,6 +119,7 @@ class ConsoleService {
     if (cmd === "history") return this._cmdHistory();
     if (cmd === "recovery") return this._cmdRecovery();
     if (cmd === "retry") return this._cmdRetry(parts.slice(1));
+    if (cmd === "dict") return this._cmdDictionary(parts.slice(1));
 
     this._sendLine(`  Unknown command: ${input}`);
     this._sendLine(`  Type "help" for available commands.`);
@@ -129,10 +131,13 @@ class ConsoleService {
       "",
       kv("status", "Show current config"),
       kv("set model <name>", "Change transcription model"),
+      kv("set text-model <name>", "Change command-mode text model"),
       kv("set hotkey <combo>", "Change global shortcut"),
+      kv("set command-hotkey <combo>", "Change command-mode shortcut"),
       kv("set injection <mode>", "deferred | blocking | off"),
       kv("set profile <name>", "fast | balanced"),
       kv("set timeslice <ms>", "Recorder timeslice (min 50)"),
+      kv("set preview <ms>", "Live preview interval (min 1000)"),
       kv("set restore-delay <ms>", "Clipboard restore delay"),
       kv("refresh mic", "Refresh microphone"),
       kv("test mic", "Test microphone levels"),
@@ -140,6 +145,9 @@ class ConsoleService {
       kv("perf", "Performance stats"),
       kv("last [n]", "Show last N transcriptions (default 1)"),
       kv("history", "List recent transcriptions"),
+      kv("dict", "List dictionary terms"),
+      kv("dict add <term>", "Add a dictionary term"),
+      kv("dict remove <term>", "Remove a dictionary term"),
       kv("recovery", "List saved recordings"),
       kv("retry <filename>", "Re-transcribe a recovery file"),
       kv("quit", "Exit"),
@@ -155,12 +163,17 @@ class ConsoleService {
       "",
       kv("Model", s.model),
       kv("Fallback", s.fallbackModel),
+      kv("Text Model", s.textModel),
       kv("Hotkey", s.shortcut),
+      kv("Command Hotkey", s.commandShortcut),
       kv("Injection", s.clipboardRestoreMode),
       kv("Restore Delay", `${s.clipboardRestoreDelayMs}ms`),
       kv("Timeslice", `${s.recorderTimesliceMs}ms`),
+      kv("Preview", `${s.previewIntervalMs}ms`),
+      kv("Done Hide", `${s.doneHideWindowMs}ms`),
       kv("Timeout", `${s.timeoutMs}ms`),
       kv("Max Queue", String(s.maxQueue)),
+      kv("Dictionary", `${this.dictionaryService?.list?.().length || 0} terms`),
       "",
     ];
     this._sendLine(lines.join("\n"));
@@ -205,10 +218,23 @@ class ConsoleService {
       return;
     }
 
+    if (key === "text-model") {
+      this.applySettings({ textModel: value });
+      this._sendLine(`  Text model -> ${this.runtimeSettings.textModel}`);
+      return;
+    }
+
     if (key === "hotkey") {
       this.applySettings({ shortcut: value });
       this.setupShortcut();
       this._sendLine(`  Hotkey -> ${this.runtimeSettings.shortcut}`);
+      return;
+    }
+
+    if (key === "command-hotkey") {
+      this.applySettings({ commandShortcut: value });
+      this.setupShortcut();
+      this._sendLine(`  Command hotkey -> ${this.runtimeSettings.commandShortcut}`);
       return;
     }
 
@@ -246,6 +272,17 @@ class ConsoleService {
       }
       this.applySettings({ recorderTimesliceMs: ms });
       this._sendLine(`  Timeslice -> ${this.runtimeSettings.recorderTimesliceMs}ms`);
+      return;
+    }
+
+    if (key === "preview") {
+      const ms = Number(value);
+      if (!Number.isFinite(ms) || ms < 1000) {
+        this._sendLine("  Preview interval must be >= 1000");
+        return;
+      }
+      this.applySettings({ previewIntervalMs: ms });
+      this._sendLine(`  Preview -> ${this.runtimeSettings.previewIntervalMs}ms`);
       return;
     }
 
@@ -377,6 +414,40 @@ class ConsoleService {
       }
     } catch (err) {
       this._sendLine(`  Retry failed: ${err.message}`);
+    }
+  }
+
+  async _cmdDictionary(args) {
+    if (!this.dictionaryService) {
+      this._sendLine("  Dictionary service not available.");
+      return;
+    }
+
+    const action = args[0]?.toLowerCase();
+    const term = args.slice(1).join(" ").trim();
+    try {
+      if (action === "add") {
+        await this.dictionaryService.add(term);
+        this._sendLine(`  Added dictionary term: ${term}`);
+        return;
+      }
+      if (action === "remove" || action === "rm") {
+        await this.dictionaryService.remove(term);
+        this._sendLine(`  Removed dictionary term: ${term}`);
+        return;
+      }
+
+      const terms = this.dictionaryService.list();
+      if (!terms.length) {
+        this._sendLine("  Dictionary is empty.");
+        return;
+      }
+      this._sendLine("");
+      this._sendLine(`  Dictionary (${terms.length}):`);
+      terms.forEach((item) => this._sendLine(`  - ${item}`));
+      this._sendLine("");
+    } catch (error) {
+      this._sendLine(`  Dictionary error: ${error.message}`);
     }
   }
 

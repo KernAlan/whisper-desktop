@@ -104,6 +104,15 @@ class DiagnosticsService {
         }
       }
 
+      if (payload.commandInstruction && typeof payload.commandInstruction === "string") {
+        const preview = payload.commandInstruction.length > 80
+          ? payload.commandInstruction.slice(0, 77) + "..."
+          : payload.commandInstruction;
+        this.logger.log(
+          `[Command] instruction="${preview}" selectedChars=${payload.commandSelectedChars || 0}`
+        );
+      }
+
       this.maybePrintPerfSummary();
       return;
     }

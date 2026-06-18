@@ -13,18 +13,25 @@ const { TypingService } = require("./services/typing-service");
 const { DiagnosticsService } = require("./services/diagnostics-service");
 const { Logger } = require("./services/logger");
 const { ConsoleService } = require("./services/console-service");
+const { DictionaryService } = require("./services/dictionary-service");
+const { TextProcessingService } = require("./services/text-processing-service");
 
 require("dotenv").config();
 
 const config = loadConfig();
 const recoveryDir = path.join(app.getPath("userData"), "recovery");
+const dictionaryPath = path.join(app.getPath("userData"), "dictionary.json");
 const runtimeSettings = {
   shortcut: config.shortcut,
+  commandShortcut: config.commandShortcut,
   model: config.transcription.model,
   fallbackModel: config.transcription.fallbackModel,
+  textModel: config.text.model,
   timeoutMs: config.transcription.timeoutMs,
   maxQueue: config.transcription.maxQueue,
   recorderTimesliceMs: config.app.mediaRecorderTimesliceMs,
+  previewIntervalMs: config.app.previewIntervalMs,
+  doneHideWindowMs: config.app.doneHideWindowMs,
   clipboardRestoreMode: config.app.clipboardRestoreMode,
   clipboardRestoreDelayMs: config.app.clipboardRestoreDelayMs,
 };
@@ -34,12 +41,14 @@ const logger = new Logger({
 });
 const diagnostics = new DiagnosticsService(config, logger);
 const windowManager = new WindowManager({ hideWindowMs: config.app.hideWindowMs });
+const dictionaryService = new DictionaryService({ filePath: dictionaryPath, logger });
 const transcriptionService = new TranscriptionService({
   apiKey: config.transcription.apiKey,
   model: config.transcription.model,
   fallbackModel: config.transcription.fallbackModel,
   timeoutMs: config.transcription.timeoutMs,
   maxQueue: config.transcription.maxQueue,
+  dictionaryService,
   logger,
   onMetric: (metric) => diagnostics.logTranscriptionMetric(metric),
   recoveryDir,
@@ -48,6 +57,13 @@ const typingService = new TypingService({
   logger,
   restoreMode: config.app.clipboardRestoreMode,
   restoreDelayMs: config.app.clipboardRestoreDelayMs,
+});
+const textProcessingService = new TextProcessingService({
+  apiKey: config.text.apiKey,
+  model: config.text.model,
+  timeoutMs: config.text.timeoutMs,
+  dictionaryService,
+  logger,
 });
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
@@ -67,13 +83,25 @@ if (!hasSingleInstanceLock) {
 
 function setupShortcut() {
   globalShortcut.unregisterAll();
-  const ok = globalShortcut.register(runtimeSettings.shortcut, () => {
-    windowManager.showWindow();
+  const dictationOk = globalShortcut.register(runtimeSettings.shortcut, () => {
+    windowManager.showWindow({ autoHide: false });
     const windows = BrowserWindow.getAllWindows();
-    windows.forEach((window) => window.webContents.send("toggle-recording"));
+    windows.forEach((window) => window.webContents.send("toggle-recording", { mode: "dictation" }));
   });
-  if (!ok) {
+  if (!dictationOk) {
     logger.error(`Failed to register global shortcut: ${runtimeSettings.shortcut}`);
+  }
+
+  const commandOk = globalShortcut.register(runtimeSettings.commandShortcut, async () => {
+    const selectedText = await typingService.captureSelectedText();
+    windowManager.showWindow({ autoHide: false });
+    const windows = BrowserWindow.getAllWindows();
+    windows.forEach((window) =>
+      window.webContents.send("toggle-recording", { mode: "command", selectedText })
+    );
+  });
+  if (!commandOk) {
+    logger.error(`Failed to register command shortcut: ${runtimeSettings.commandShortcut}`);
   }
 }
 
@@ -92,6 +120,15 @@ function applySettings(payload) {
     });
   }
 
+  if (typeof payload.textModel === "string" && payload.textModel.trim()) {
+    runtimeSettings.textModel = payload.textModel.trim();
+    textProcessingService.setModel(runtimeSettings.textModel);
+  }
+
+  if (typeof payload.commandShortcut === "string" && payload.commandShortcut.trim()) {
+    runtimeSettings.commandShortcut = payload.commandShortcut.trim();
+  }
+
   if (
     typeof payload.clipboardRestoreMode === "string" &&
     ["deferred", "blocking", "off"].includes(payload.clipboardRestoreMode)
@@ -105,6 +142,10 @@ function applySettings(payload) {
 
   if (Number.isFinite(payload.recorderTimesliceMs) && payload.recorderTimesliceMs >= 50) {
     runtimeSettings.recorderTimesliceMs = Number(payload.recorderTimesliceMs);
+  }
+
+  if (Number.isFinite(payload.previewIntervalMs) && payload.previewIntervalMs >= 1000) {
+    runtimeSettings.previewIntervalMs = Number(payload.previewIntervalMs);
   }
 
   typingService.setRestoreConfig({
@@ -122,6 +163,7 @@ const consoleService = new ConsoleService({
   mainWindow: null,
   app,
   transcriptionService,
+  dictionaryService,
 });
 
 function createAndWireMainWindow() {
@@ -145,13 +187,18 @@ function createAndWireMainWindow() {
 function getRuntimeConfigPayload() {
   return {
     shortcut: runtimeSettings.shortcut,
+    commandShortcut: runtimeSettings.commandShortcut,
     model: runtimeSettings.model,
     fallbackModel: runtimeSettings.fallbackModel,
+    textModel: runtimeSettings.textModel,
     timeoutMs: runtimeSettings.timeoutMs,
     maxQueue: runtimeSettings.maxQueue,
     recorderTimesliceMs: runtimeSettings.recorderTimesliceMs,
+    previewIntervalMs: runtimeSettings.previewIntervalMs,
+    doneHideWindowMs: runtimeSettings.doneHideWindowMs,
     clipboardRestoreMode: runtimeSettings.clipboardRestoreMode,
     clipboardRestoreDelayMs: runtimeSettings.clipboardRestoreDelayMs,
+    dictionaryTerms: dictionaryService.list(),
   };
 }
 
@@ -167,7 +214,7 @@ async function checkAndRequestMicrophonePermission() {
   }
 }
 
-app.on("ready", () => {
+app.on("ready", async () => {
   diagnostics.printStartup({
     logFilePath: logger.getCurrentLogPath(),
     appVersion: app.getVersion(),
@@ -181,6 +228,7 @@ app.on("ready", () => {
     openAsHidden: true,
   });
 
+  await dictionaryService.load();
   createAndWireMainWindow();
   consoleService.start();
 });
@@ -209,6 +257,10 @@ ipcMain.handle("transcribe-audio", async (_event, arrayBuffer) => {
   return transcriptionService.transcribe(arrayBuffer);
 });
 
+ipcMain.handle("transcribe-preview", async (_event, arrayBuffer) => {
+  return transcriptionService.transcribePreview(arrayBuffer);
+});
+
 ipcMain.handle("transcribe-audio-chunked", async (_event, arrayBuffers) => {
   return transcriptionService.transcribeChunked(arrayBuffers);
 });
@@ -232,6 +284,14 @@ ipcMain.handle("simulate-typing", async (_event, text) => {
   return typingService.pasteText(text);
 });
 
+ipcMain.handle("capture-selected-text", async () => {
+  return typingService.captureSelectedText();
+});
+
+ipcMain.handle("process-command", async (_event, payload) => {
+  return textProcessingService.applyCommand(payload || {});
+});
+
 ipcMain.handle("request-microphone-access", async () => {
   const hasAccess = await checkAndRequestMicrophonePermission();
   if (!hasAccess) throw new Error("Microphone access not granted");
@@ -242,16 +302,39 @@ ipcMain.handle("hide-window", () => {
   windowManager.hideWindow();
 });
 
+ipcMain.handle("schedule-hide-window", (_event, delayMs) => {
+  windowManager.scheduleHide(Number(delayMs) || undefined);
+});
+
+ipcMain.handle("cancel-hide-window", () => {
+  windowManager.cancelHide();
+});
+
 ipcMain.handle("get-runtime-config", () => {
   return getRuntimeConfigPayload();
 });
 
 ipcMain.handle("update-runtime-settings", async (_event, payload) => {
   applySettings(payload);
-  if (typeof payload?.shortcut === "string" && payload.shortcut.trim()) {
+  if (
+    (typeof payload?.shortcut === "string" && payload.shortcut.trim()) ||
+    (typeof payload?.commandShortcut === "string" && payload.commandShortcut.trim())
+  ) {
     setupShortcut();
   }
   return getRuntimeConfigPayload();
+});
+
+ipcMain.handle("dictionary-list", async () => {
+  return dictionaryService.list();
+});
+
+ipcMain.handle("dictionary-add", async (_event, term) => {
+  return dictionaryService.add(term);
+});
+
+ipcMain.handle("dictionary-remove", async (_event, term) => {
+  return dictionaryService.remove(term);
 });
 
 ipcMain.on("renderer-diagnostics", (_event, payload) => {

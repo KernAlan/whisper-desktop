@@ -5,6 +5,7 @@ class WindowManager {
   constructor({ hideWindowMs }) {
     this.hideWindowMs = hideWindowMs;
     this.mainWindow = null;
+    this.settingsWindow = null;
     this.hideTimer = null;
   }
 
@@ -36,12 +37,51 @@ class WindowManager {
     return this.mainWindow;
   }
 
-  createMenu(onQuit) {
+  createSettingsWindow() {
+    const preloadPath = path.join(__dirname, "..", "..", "preload", "preload.js");
+    this.settingsWindow = new BrowserWindow({
+      width: 760,
+      height: 720,
+      minWidth: 680,
+      minHeight: 560,
+      show: false,
+      title: "Whisper Desktop Settings",
+      backgroundColor: "#f5f2ea",
+      webPreferences: {
+        preload: preloadPath,
+        contextIsolation: true,
+        nodeIntegration: false,
+      },
+    });
+
+    this.settingsWindow.loadFile(path.join(__dirname, "..", "..", "..", "settings.html"));
+    this.settingsWindow.on("closed", () => {
+      this.settingsWindow = null;
+    });
+    return this.settingsWindow;
+  }
+
+  showSettingsWindow() {
+    if (!this.settingsWindow) {
+      this.createSettingsWindow();
+    }
+    this.settingsWindow.once("ready-to-show", () => {
+      this.settingsWindow?.show();
+      this.settingsWindow?.focus();
+    });
+    if (!this.settingsWindow.isVisible()) {
+      this.settingsWindow.show();
+    }
+    this.settingsWindow.focus();
+  }
+
+  createMenu({ onShowApp, onSettings, onQuit }) {
     const template = [
       {
         label: "File",
         submenu: [
-          { label: "Show App", click: () => this.mainWindow?.show() },
+          { label: "Show App", click: onShowApp },
+          { label: "Settings", click: onSettings },
           { type: "separator" },
           { label: "Quit", click: onQuit },
         ],

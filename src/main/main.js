@@ -1,6 +1,7 @@
 const {
   app,
   BrowserWindow,
+  clipboard,
   ipcMain,
   globalShortcut,
   systemPreferences,
@@ -15,39 +16,37 @@ const { Logger } = require("./services/logger");
 const { ConsoleService } = require("./services/console-service");
 const { DictionaryService } = require("./services/dictionary-service");
 const { TextProcessingService } = require("./services/text-processing-service");
+const {
+  RuntimeSettingsService,
+  createRuntimeDefaults,
+  applyRuntimeSettings,
+} = require("./services/runtime-settings-service");
 
 require("dotenv").config();
 
 const config = loadConfig();
 const recoveryDir = path.join(app.getPath("userData"), "recovery");
 const dictionaryPath = path.join(app.getPath("userData"), "dictionary.json");
-const runtimeSettings = {
-  shortcut: config.shortcut,
-  commandShortcut: config.commandShortcut,
-  model: config.transcription.model,
-  fallbackModel: config.transcription.fallbackModel,
-  textModel: config.text.model,
-  timeoutMs: config.transcription.timeoutMs,
-  maxQueue: config.transcription.maxQueue,
-  recorderTimesliceMs: config.app.mediaRecorderTimesliceMs,
-  previewIntervalMs: config.app.previewIntervalMs,
-  doneHideWindowMs: config.app.doneHideWindowMs,
-  clipboardRestoreMode: config.app.clipboardRestoreMode,
-  clipboardRestoreDelayMs: config.app.clipboardRestoreDelayMs,
-};
 const configIssues = validateConfig(config);
 const logger = new Logger({
   logFilePath: process.env.APP_LOG_FILE || path.join(process.cwd(), "logs", "app.log"),
 });
+const runtimeDefaults = createRuntimeDefaults(config);
+const runtimeSettingsService = new RuntimeSettingsService({
+  filePath: path.join(app.getPath("userData"), "settings.json"),
+  defaults: runtimeDefaults,
+  logger,
+});
+const runtimeSettings = runtimeSettingsService.loadSync();
 const diagnostics = new DiagnosticsService(config, logger);
 const windowManager = new WindowManager({ hideWindowMs: config.app.hideWindowMs });
 const dictionaryService = new DictionaryService({ filePath: dictionaryPath, logger });
 const transcriptionService = new TranscriptionService({
   apiKey: config.transcription.apiKey,
-  model: config.transcription.model,
-  fallbackModel: config.transcription.fallbackModel,
-  timeoutMs: config.transcription.timeoutMs,
-  maxQueue: config.transcription.maxQueue,
+  model: runtimeSettings.model,
+  fallbackModel: runtimeSettings.fallbackModel,
+  timeoutMs: runtimeSettings.timeoutMs,
+  maxQueue: runtimeSettings.maxQueue,
   dictionaryService,
   logger,
   onMetric: (metric) => diagnostics.logTranscriptionMetric(metric),
@@ -55,13 +54,17 @@ const transcriptionService = new TranscriptionService({
 });
 const typingService = new TypingService({
   logger,
-  restoreMode: config.app.clipboardRestoreMode,
-  restoreDelayMs: config.app.clipboardRestoreDelayMs,
+  restoreMode: runtimeSettings.clipboardRestoreMode,
+  restoreDelayMs: runtimeSettings.clipboardRestoreDelayMs,
+  pasteChunkChars: runtimeSettings.pasteChunkChars,
+  pasteChunkDelayMs: runtimeSettings.pasteChunkDelayMs,
 });
 const textProcessingService = new TextProcessingService({
   apiKey: config.text.apiKey,
-  model: config.text.model,
+  model: runtimeSettings.textModel,
   timeoutMs: config.text.timeoutMs,
+  polishChunkWords: runtimeSettings.polishChunkWords,
+  polishMaxWords: runtimeSettings.polishMaxWords,
   dictionaryService,
   logger,
 });
@@ -86,18 +89,27 @@ function setupShortcut() {
   const dictationOk = globalShortcut.register(runtimeSettings.shortcut, () => {
     windowManager.showWindow({ autoHide: false });
     const windows = BrowserWindow.getAllWindows();
-    windows.forEach((window) => window.webContents.send("toggle-recording", { mode: "dictation" }));
+    windows.forEach((window) =>
+      window.webContents.send("toggle-recording", {
+        mode: "dictation",
+        dictationMode: runtimeSettings.dictationMode,
+      })
+    );
   });
   if (!dictationOk) {
     logger.error(`Failed to register global shortcut: ${runtimeSettings.shortcut}`);
   }
 
   const commandOk = globalShortcut.register(runtimeSettings.commandShortcut, async () => {
-    const selectedText = await typingService.captureSelectedText();
+    const selection = await typingService.captureSelectedText();
     windowManager.showWindow({ autoHide: false });
     const windows = BrowserWindow.getAllWindows();
     windows.forEach((window) =>
-      window.webContents.send("toggle-recording", { mode: "command", selectedText })
+      window.webContents.send("toggle-recording", {
+        mode: "command",
+        selectedText: selection.text,
+        selection,
+      })
     );
   });
   if (!commandOk) {
@@ -105,58 +117,51 @@ function setupShortcut() {
   }
 }
 
-function applySettings(payload) {
-  if (!payload || typeof payload !== "object") return;
-
-  if (typeof payload.shortcut === "string" && payload.shortcut.trim()) {
-    runtimeSettings.shortcut = payload.shortcut.trim();
-  }
-
-  if (typeof payload.model === "string" && payload.model.trim()) {
-    runtimeSettings.model = payload.model.trim();
-    transcriptionService.setModels({
-      model: runtimeSettings.model,
-      fallbackModel: runtimeSettings.fallbackModel,
-    });
-  }
-
-  if (typeof payload.textModel === "string" && payload.textModel.trim()) {
-    runtimeSettings.textModel = payload.textModel.trim();
-    textProcessingService.setModel(runtimeSettings.textModel);
-  }
-
-  if (typeof payload.commandShortcut === "string" && payload.commandShortcut.trim()) {
-    runtimeSettings.commandShortcut = payload.commandShortcut.trim();
-  }
-
-  if (
-    typeof payload.clipboardRestoreMode === "string" &&
-    ["deferred", "blocking", "off"].includes(payload.clipboardRestoreMode)
-  ) {
-    runtimeSettings.clipboardRestoreMode = payload.clipboardRestoreMode;
-  }
-
-  if (Number.isFinite(payload.clipboardRestoreDelayMs) && payload.clipboardRestoreDelayMs > 0) {
-    runtimeSettings.clipboardRestoreDelayMs = Number(payload.clipboardRestoreDelayMs);
-  }
-
-  if (Number.isFinite(payload.recorderTimesliceMs) && payload.recorderTimesliceMs >= 50) {
-    runtimeSettings.recorderTimesliceMs = Number(payload.recorderTimesliceMs);
-  }
-
-  if (Number.isFinite(payload.previewIntervalMs) && payload.previewIntervalMs >= 1000) {
-    runtimeSettings.previewIntervalMs = Number(payload.previewIntervalMs);
-  }
-
+function syncRuntimeServices() {
+  transcriptionService.setModels({
+    model: runtimeSettings.model,
+    fallbackModel: runtimeSettings.fallbackModel,
+  });
+  textProcessingService.setModel(runtimeSettings.textModel);
   typingService.setRestoreConfig({
     restoreMode: runtimeSettings.clipboardRestoreMode,
     restoreDelayMs: runtimeSettings.clipboardRestoreDelayMs,
   });
+  typingService.setPasteConfig({
+    pasteChunkChars: runtimeSettings.pasteChunkChars,
+    pasteChunkDelayMs: runtimeSettings.pasteChunkDelayMs,
+  });
+  textProcessingService.setPolishConfig({
+    polishChunkWords: runtimeSettings.polishChunkWords,
+    polishMaxWords: runtimeSettings.polishMaxWords,
+  });
+}
+
+function applySettings(payload, { persist = true } = {}) {
+  if (!payload || typeof payload !== "object") return;
+
+  Object.assign(runtimeSettings, applyRuntimeSettings(runtimeSettings, payload));
+  syncRuntimeServices();
+  if (persist) runtimeSettingsService.saveSync(runtimeSettings);
+}
+
+function resetSettings() {
+  Object.keys(runtimeSettings).forEach((key) => delete runtimeSettings[key]);
+  Object.assign(runtimeSettings, runtimeSettingsService.resetSync());
+  syncRuntimeServices();
 }
 
 const consoleService = new ConsoleService({
   runtimeSettings,
-  applySettings,
+  applySettings: (payload) => {
+    applySettings(payload);
+    broadcastRuntimeConfig();
+  },
+  resetSettings: () => {
+    resetSettings();
+    setupShortcut();
+    return broadcastRuntimeConfig();
+  },
   setupShortcut,
   diagnostics,
   logger,
@@ -164,12 +169,17 @@ const consoleService = new ConsoleService({
   app,
   transcriptionService,
   dictionaryService,
+  openSettings: () => windowManager.showSettingsWindow(),
 });
 
 function createAndWireMainWindow() {
   const mainWindow = windowManager.createMainWindow();
   consoleService.setMainWindow(mainWindow);
-  windowManager.createMenu(() => app.quit());
+  windowManager.createMenu({
+    onShowApp: () => windowManager.showWindow(),
+    onSettings: () => windowManager.showSettingsWindow(),
+    onQuit: () => app.quit(),
+  });
   mainWindow.webContents.on("did-finish-load", () => setupShortcut());
   mainWindow.webContents.on("did-fail-load", (_event, code, description) => {
     logger.error("Failed to load window:", code, description);
@@ -191,14 +201,36 @@ function getRuntimeConfigPayload() {
     model: runtimeSettings.model,
     fallbackModel: runtimeSettings.fallbackModel,
     textModel: runtimeSettings.textModel,
+    polishChunkWords: runtimeSettings.polishChunkWords,
+    polishMaxWords: runtimeSettings.polishMaxWords,
     timeoutMs: runtimeSettings.timeoutMs,
     maxQueue: runtimeSettings.maxQueue,
     recorderTimesliceMs: runtimeSettings.recorderTimesliceMs,
     previewIntervalMs: runtimeSettings.previewIntervalMs,
+    dictationMode: runtimeSettings.dictationMode,
     doneHideWindowMs: runtimeSettings.doneHideWindowMs,
     clipboardRestoreMode: runtimeSettings.clipboardRestoreMode,
     clipboardRestoreDelayMs: runtimeSettings.clipboardRestoreDelayMs,
+    pasteChunkChars: runtimeSettings.pasteChunkChars,
+    pasteChunkDelayMs: runtimeSettings.pasteChunkDelayMs,
     dictionaryTerms: dictionaryService.list(),
+  };
+}
+
+function broadcastRuntimeConfig() {
+  const nextConfig = getRuntimeConfigPayload();
+  BrowserWindow.getAllWindows().forEach((window) => {
+    window.webContents.send("runtime-config-updated", nextConfig);
+  });
+  return nextConfig;
+}
+
+function transcriptionErrorPayload(error) {
+  return {
+    ok: false,
+    error: error?.message || "Transcription failed",
+    recoveryFiles: Array.isArray(error?.recoveryFiles) ? error.recoveryFiles : [],
+    partialText: typeof error?.partialText === "string" ? error.partialText : "",
   };
 }
 
@@ -254,7 +286,14 @@ app.on("second-instance", () => {
 });
 
 ipcMain.handle("transcribe-audio", async (_event, arrayBuffer) => {
-  return transcriptionService.transcribe(arrayBuffer);
+  try {
+    return {
+      ok: true,
+      text: await transcriptionService.transcribe(arrayBuffer),
+    };
+  } catch (error) {
+    return transcriptionErrorPayload(error);
+  }
 });
 
 ipcMain.handle("transcribe-preview", async (_event, arrayBuffer) => {
@@ -262,10 +301,46 @@ ipcMain.handle("transcribe-preview", async (_event, arrayBuffer) => {
 });
 
 ipcMain.handle("transcribe-audio-chunked", async (_event, arrayBuffers) => {
-  return transcriptionService.transcribeChunked(arrayBuffers);
+  try {
+    return {
+      ok: true,
+      text: await transcriptionService.transcribeChunked(arrayBuffers),
+    };
+  } catch (error) {
+    return transcriptionErrorPayload(error);
+  }
 });
 
-ipcMain.handle("simulate-typing", async (_event, text) => {
+ipcMain.handle("retry-recovery", async (_event, payload) => {
+  const target = payload && typeof payload === "object" ? payload.target : payload;
+  const removeOnSuccess = payload && typeof payload === "object"
+    ? payload.removeOnSuccess !== false
+    : true;
+  try {
+    return {
+      ok: true,
+      text: await transcriptionService.retryRecoveryFile(String(target || "latest"), {
+        removeOnSuccess,
+      }),
+    };
+  } catch (error) {
+    return transcriptionErrorPayload(error);
+  }
+});
+
+ipcMain.handle("delete-recovery", async (_event, target) => {
+  return {
+    ok: true,
+    deleted: await transcriptionService.deleteRecoveryTarget(String(target || "latest")),
+  };
+});
+
+ipcMain.handle("copy-text", async (_event, text) => {
+  clipboard.writeText(String(text || ""));
+  return true;
+});
+
+ipcMain.handle("simulate-typing", async (event, text) => {
   if (process.platform === "darwin") {
     try {
       const trusted = systemPreferences.isTrustedAccessibilityClient(true);
@@ -281,7 +356,9 @@ ipcMain.handle("simulate-typing", async (_event, text) => {
     }
   }
 
-  return typingService.pasteText(text);
+  return typingService.pasteText(text, {
+    onProgress: (progress) => event.sender.send("typing-progress", progress),
+  });
 });
 
 ipcMain.handle("capture-selected-text", async () => {
@@ -290,6 +367,10 @@ ipcMain.handle("capture-selected-text", async () => {
 
 ipcMain.handle("process-command", async (_event, payload) => {
   return textProcessingService.applyCommand(payload || {});
+});
+
+ipcMain.handle("polish-dictation", async (_event, payload) => {
+  return textProcessingService.polishDictation(payload || {});
 });
 
 ipcMain.handle("request-microphone-access", async () => {
@@ -322,7 +403,13 @@ ipcMain.handle("update-runtime-settings", async (_event, payload) => {
   ) {
     setupShortcut();
   }
-  return getRuntimeConfigPayload();
+  return broadcastRuntimeConfig();
+});
+
+ipcMain.handle("reset-runtime-settings", async () => {
+  resetSettings();
+  setupShortcut();
+  return broadcastRuntimeConfig();
 });
 
 ipcMain.handle("dictionary-list", async () => {
@@ -335,6 +422,10 @@ ipcMain.handle("dictionary-add", async (_event, term) => {
 
 ipcMain.handle("dictionary-remove", async (_event, term) => {
   return dictionaryService.remove(term);
+});
+
+ipcMain.handle("dictionary-suggest", async () => {
+  return diagnostics.suggestDictionaryTerms(dictionaryService.list());
 });
 
 ipcMain.on("renderer-diagnostics", (_event, payload) => {

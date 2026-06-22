@@ -14,11 +14,14 @@ Tl;dr With the magic that is Whisper and the speed of the Groq servers, I though
 - Rolling live transcript preview while recording
 - Automatic microphone selection with device change detection
 - Transcription using Groq Whisper models (fast default with fallback)
+- Optional polished dictation using a text model for punctuation, capitalization, and formatting
 - Local custom dictionary to bias transcription toward your names and jargon
 - Automatic insertion of transcribed text into the active text input field
 - Audio recovery — failed recordings are saved instead of deleted
 - Chunked transcription — large recordings (>20MB) are auto-split to stay under the API size limit
 - Terminal CLI for runtime configuration and diagnostics
+- Settings window for hotkeys, modes, models, dictionary terms, and long-text tuning
+- Saved settings so runtime tweaks survive restarts
 - One-shot CLI commands for scripting and automation
 
 ## Installation
@@ -45,17 +48,22 @@ Tl;dr With the magic that is Whisper and the speed of the Groq servers, I though
    APP_HIDE_WINDOW_MS=5000
    APP_DONE_HIDE_WINDOW_MS=900
    APP_MEDIARECORDER_TIMESLICE_MS=150
-   APP_PREVIEW_INTERVAL_MS=2500
+   APP_PREVIEW_INTERVAL_MS=1500
+   APP_DICTATION_MODE=polished
+   APP_PASTE_CHUNK_CHARS=1500
+   APP_PASTE_CHUNK_DELAY_MS=80
    APP_CLIPBOARD_RESTORE_MODE=deferred
    APP_CLIPBOARD_RESTORE_DELAY_MS=120
    APP_LOG_FILE=logs/app.log
    APP_LOG_MAX_FILES=3
    GROQ_TRANSCRIPTION_MODEL=whisper-large-v3-turbo
    GROQ_FALLBACK_TRANSCRIPTION_MODEL=whisper-large-v3
-   GROQ_TRANSCRIPTION_TIMEOUT_MS=25000
+   GROQ_TRANSCRIPTION_TIMEOUT_MS=60000
    GROQ_TRANSCRIPTION_MAX_QUEUE=2
    GROQ_TEXT_MODEL=llama-3.1-8b-instant
    GROQ_TEXT_TIMEOUT_MS=20000
+   GROQ_POLISH_CHUNK_WORDS=450
+   GROQ_POLISH_MAX_WORDS=2500
    ```
 
    To obtain your Groq API key, visit [https://console.groq.com/keys](https://console.groq.com/keys).
@@ -73,6 +81,12 @@ Tl;dr With the magic that is Whisper and the speed of the Groq servers, I though
 4. Press `Ctrl+Shift+Space` again to stop recording and initiate transcription
 5. The transcribed text will be automatically inserted into the active text input field
 
+By default, dictation is lightly polished before paste. It should preserve content words and only drop obvious filler/speech artifacts. Set `APP_DICTATION_MODE=fast` or run `set dictation fast` if you want raw Whisper output with less latency.
+
+Long dictations are handled conservatively: polishing runs in text chunks up to `GROQ_POLISH_CHUNK_WORDS`, and recordings over `GROQ_POLISH_MAX_WORDS` skip polishing and paste the raw transcript.
+
+Long inserts are pasted in chunks too. The app preserves your clipboard once, pastes each chunk, then restores the clipboard after the full insert.
+
 ### Trying It Locally
 
 Once the app is running, you can check that the hotkeys and models loaded:
@@ -85,6 +99,14 @@ Then put your cursor in any text field and try:
 
 - `Ctrl+Shift+Space` to dictate
 - `Ctrl+Shift+E` to edit selected text by voice
+
+Open settings from the terminal if you want to change the main runtime options without remembering every CLI command:
+
+```
+node cli.js settings
+```
+
+Settings changed from the window or CLI are saved locally and loaded next time. The `.env` file is still the default source, and `reset settings` goes back to those defaults.
 
 To shut it down from the terminal:
 
@@ -101,6 +123,8 @@ node cli.js quit
 5. The selected text is replaced with the rewritten result
 
 This uses the text model configured by `GROQ_TEXT_MODEL`.
+
+If no selected text is captured, the overlay says so and command mode treats your instruction as a request to generate new text instead of rewriting a selection.
 
 ### Dictionary
 
@@ -122,7 +146,8 @@ Dictionary terms are stored locally and used as hints during transcription and c
 whisper> help
   status                     Show current config
   set model <name>           Change transcription model
-  set text-model <name>      Change command-mode text model
+  set text-model <name>      Change cleanup/command text model
+  set dictation <mode>       fast | polished
   set hotkey <combo>         Change global shortcut
   set command-hotkey <combo> Change command-mode shortcut
   set injection <mode>       deferred | blocking | off
@@ -134,13 +159,18 @@ whisper> help
   test mic                   Test microphone levels
   devices                    List audio inputs
   perf                       Performance stats
+  settings                   Open settings window
+  reset settings             Reset saved settings to .env/defaults
   last [n]                   Show last N transcriptions (default 1)
+  last-command               Show last command-mode run
   history                    List recent transcriptions
   dict                       List dictionary terms
+  dict suggest               Suggest terms from recent transcripts
+  dict add-suggested [n]     Add suggested terms
   dict add <term>            Add a dictionary term
   dict remove <term>         Remove a dictionary term
   recovery                   List saved recordings
-  retry <filename>           Re-transcribe a recovery file
+  retry <latest|file|session> Re-transcribe saved audio
   quit                       Exit
 ```
 
@@ -149,17 +179,21 @@ You can also send one-shot commands to a running instance:
 ```
 node cli.js status
 node cli.js set model whisper-large-v3
+node cli.js set dictation fast
 node cli.js set hotkey Ctrl+Shift+Z
 node cli.js dict add KernAlan
 node cli.js perf
 node cli.js refresh mic
+node cli.js reset settings
 ```
 
 This works from scripts, Stream Deck buttons, or any automation tool.
 
 ### Audio Recovery
 
-If a transcription fails (network error, timeout, API limit), the audio is saved to a recovery folder instead of being deleted. Recordings over 20MB are automatically split into chunks before sending to the API.
+If a transcription fails (network error, timeout, API limit), the audio is saved to a recovery folder instead of being deleted. The app retries the saved audio once automatically. If that still fails, the overlay stays open with a retry button. If there is partial text, it is copied to your clipboard and you can copy it again from the overlay.
+
+Recordings over 20MB are saved as one chunked recovery session, so retry works on the whole recording without stitching files together.
 
 To list and retry saved recordings:
 
@@ -167,19 +201,21 @@ To list and retry saved recordings:
 whisper> recovery
   recording-2026-02-16T15-30-00.webm  4.2MB  2026-02-16 15:30:00
 
-whisper> retry recording-2026-02-16T15-30-00.webm
+whisper> retry latest
   Transcription (342 chars):
   ...
 ```
 
-The recovery folder is capped at 10 files. Oldest files are pruned automatically.
+The CLI is a backup path. `retry latest` works for both normal recordings and long chunked sessions. You can also retry a specific filename or session id from `recovery`.
+
+The recovery folder is capped at 10 sessions. Oldest sessions are pruned automatically.
 
 ### Terminal Diagnostics
 
 On startup, the terminal shows the current configuration. During usage it logs:
 
 - Selected microphone device and refresh events
-- Pipeline latency per transcription (`preprocess`, `transcribe`, `paste`, `restore`)
+- Pipeline latency per transcription (`preprocess`, `transcribe`, `polish`, `paste`, paste chunks, `restore`)
 - Rolling performance summaries every 10 runs (`p50`/`p95`)
 - Persistent daily logs (`app-YYYYMMDD.log`) in the configured log directory
 
@@ -206,8 +242,10 @@ On startup, the terminal shows the current configuration. During usage it logs:
 The main components of the application are:
 
 - `cli.js`: Terminal wrapper — interactive REPL and one-shot CLI
+- `settings.html`: Settings window
 - `src/main/main.js`: Main process orchestration + IPC wiring
 - `src/main/services/console-service.js`: Named pipe server for CLI commands
+- `src/main/services/runtime-settings-service.js`: saved runtime settings
 - `src/main/services/transcription-service.js`: queue/timeout/fallback transcription pipeline
 - `src/main/services/text-processing-service.js`: command-mode rewrite pipeline
 - `src/main/services/dictionary-service.js`: persistent custom dictionary
@@ -215,6 +253,7 @@ The main components of the application are:
 - `src/main/services/diagnostics-service.js`: startup and runtime terminal diagnostics
 - `src/main/ui/window-manager.js`: app window/menu management
 - `src/renderer/renderer.js`: renderer bootstrap + UX orchestration
+- `src/renderer/settings.js`: settings window controller
 - `src/renderer/core/`: state machine, device manager, audio engine, recorder controller
 - `src/shared/config.js`: runtime config parsing and validation
 

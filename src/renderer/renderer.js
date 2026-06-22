@@ -44,10 +44,19 @@ function renderRuntimeConfig(config) {
   const runtimeInfo = document.getElementById("runtimeInfo");
   const hotkeyHint = document.getElementById("hotkeyHint");
   if (runtimeInfo) {
-    runtimeInfo.textContent = `ASR: ${config.model} | Text: ${config.textModel} | Preview: ${config.previewIntervalMs}ms | Dictionary: ${(config.dictionaryTerms || []).length}`;
+    runtimeInfo.textContent = `ASR: ${config.model} | Text: ${config.textModel} | Dictation: ${config.dictationMode} | Dictionary: ${(config.dictionaryTerms || []).length}`;
   }
   if (hotkeyHint) {
     hotkeyHint.textContent = `${platformShortcutDisplay(config.shortcut)} dictates | ${platformShortcutDisplay(config.commandShortcut)} edits selection`;
+  }
+}
+
+function applyRuntimeConfig(config) {
+  renderRuntimeConfig(config);
+  if (controller) {
+    controller.setPreviewIntervalMs(config.previewIntervalMs);
+    controller.setDoneHideWindowMs(config.doneHideWindowMs);
+    controller.setDictationMode(config.dictationMode);
   }
 }
 
@@ -62,7 +71,7 @@ function truncateMiddle(text, maxLength) {
   return `${text.slice(0, Math.floor(maxLength / 2))} ... ${text.slice(-Math.floor(maxLength / 2))}`;
 }
 
-function updatePreview(text, { mode = "dictation", phase = "preview", selectedText = "" } = {}) {
+function updatePreview(text, { mode = "dictation", phase = "preview", selectedText = "", selection, previewParts = 0 } = {}) {
   renderMode(mode);
   const previewMeta = document.getElementById("previewMeta");
   const previewText = document.getElementById("previewText");
@@ -71,17 +80,31 @@ function updatePreview(text, { mode = "dictation", phase = "preview", selectedTe
   if (selectedElement) {
     const shouldShowSelection = mode === "command" && selectedText;
     selectedElement.style.display = shouldShowSelection ? "block" : "none";
-    selectedElement.textContent = shouldShowSelection
-      ? `Selected: ${truncateMiddle(selectedText, 180)}`
-      : "";
+    if (shouldShowSelection) {
+      selectedElement.textContent = `Selection captured (${selectedText.length} chars): ${truncateMiddle(selectedText, 160)}`;
+    } else if (mode === "command") {
+      selectedElement.style.display = "block";
+      selectedElement.textContent = selection?.ok === false
+        ? `No selection captured: ${selection.error || "copy failed"}`
+        : "No selection captured. Command will generate new text.";
+    } else {
+      selectedElement.textContent = "";
+    }
   }
 
   if (previewMeta) {
     const labels = {
       recording: mode === "command" ? "Listening for command" : "Listening",
-      preview: mode === "command" ? "Command preview" : "Live preview",
+      preview: mode === "command"
+        ? "Command preview"
+        : previewParts > 1
+          ? `Live preview (${previewParts} parts)`
+          : "Live preview",
       final: mode === "command" ? "Command heard" : "Final transcript",
+      polished: "Polished transcript",
       result: "Rewrite result",
+      recovering: "Recovering",
+      error: "Needs retry",
     };
     previewMeta.textContent = labels[phase] || "Preview";
   }
@@ -95,6 +118,18 @@ function updatePreview(text, { mode = "dictation", phase = "preview", selectedTe
       previewText.textContent = "Waiting for speech.";
     }
   }
+}
+
+function updateRecoveryActions(payload = null) {
+  const root = document.getElementById("recoveryActions");
+  const copyPartial = document.getElementById("copyPartial");
+  const copyCommand = document.getElementById("copyRecoveryCommand");
+  if (!root || !copyPartial || !copyCommand) return;
+
+  const shouldShow = Boolean(payload?.show);
+  root.style.display = shouldShow ? "flex" : "none";
+  copyPartial.style.display = payload?.partialText ? "inline-block" : "none";
+  copyCommand.style.display = payload?.command ? "inline-block" : "none";
 }
 
 async function refreshMicSelection() {
@@ -156,7 +191,7 @@ async function testMicrophone() {
 async function boot() {
   const runtimeConfig = await window.electronAPI.getRuntimeConfig();
   const isMac = navigator.platform.toLowerCase().includes("mac");
-  renderRuntimeConfig(runtimeConfig);
+  applyRuntimeConfig(runtimeConfig);
 
   const audioEngine = new AudioEngine({
     chooseDevice: chooseBestAudioInputDevice,
@@ -177,13 +212,19 @@ async function boot() {
     transcribeAudio: (arrayBuffer) => window.electronAPI.transcribeAudio(arrayBuffer),
     transcribePreview: (arrayBuffer) => window.electronAPI.transcribePreview(arrayBuffer),
     transcribeAudioChunked: (arrayBuffers) => window.electronAPI.transcribeAudioChunked(arrayBuffers),
+    retryRecovery: (target, options) => window.electronAPI.retryRecovery(target, options),
+    deleteRecovery: (target) => window.electronAPI.deleteRecovery(target),
+    polishDictation: (payload) => window.electronAPI.polishDictation(payload),
     processCommand: (payload) => window.electronAPI.processCommand(payload),
     simulateTyping: (text) => window.electronAPI.simulateTyping(text),
+    copyText: (text) => window.electronAPI.copyText(text),
     updateStatus,
     updatePreview,
+    updateRecoveryActions,
     onDiagnostics: sendDiagnostics,
   });
   controller.setPreviewIntervalMs(runtimeConfig.previewIntervalMs);
+  controller.setDictationMode(runtimeConfig.dictationMode);
 
   try {
     await controller.initialize();
@@ -205,10 +246,42 @@ async function boot() {
   }
 
   window.electronAPI.onToggleRecording((payload = {}) => {
+    updateRecoveryActions(null);
     controller.toggleRecording(payload).catch((error) => {
       console.error("Toggle failed:", error);
       updateStatus("Toggle failed", "red");
     });
+  });
+
+  document.getElementById("retryRecovery")?.addEventListener("click", () => {
+    controller.retrySavedRecovery().catch((error) => {
+      console.error("Manual recovery retry failed:", error);
+      updateStatus("Retry failed", "red");
+    });
+  });
+
+  document.getElementById("copyPartial")?.addEventListener("click", () => {
+    controller.copyRecoveryPartial().catch((error) => {
+      console.error("Copy partial failed:", error);
+      updateStatus("Copy failed", "red");
+    });
+  });
+
+  document.getElementById("copyRecoveryCommand")?.addEventListener("click", () => {
+    controller.copyRecoveryCommand().catch((error) => {
+      console.error("Copy command failed:", error);
+      updateStatus("Copy failed", "red");
+    });
+  });
+
+  window.electronAPI.onTypingProgress?.((progress = {}) => {
+    if (progress.total > 1) {
+      updateStatus(`Inserting ${progress.index}/${progress.total}...`, "green");
+    }
+  });
+
+  window.electronAPI.onRuntimeConfigUpdated?.((nextConfig) => {
+    applyRuntimeConfig(nextConfig);
   });
 
   navigator.mediaDevices?.addEventListener?.("devicechange", () => {

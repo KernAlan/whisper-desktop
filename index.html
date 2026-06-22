@@ -94,6 +94,29 @@
                 white-space: pre-wrap;
                 overflow-wrap: anywhere;
             }
+            #recoveryActions {
+                display: none;
+                gap: 8px;
+                margin-top: 10px;
+                -webkit-app-region: no-drag;
+            }
+            #recoveryActions button {
+                background: rgba(255, 255, 255, 0.68);
+                border: 1px solid var(--line);
+                border-radius: 6px;
+                color: var(--ink);
+                cursor: pointer;
+                font: inherit;
+                font-size: 11px;
+                font-weight: 700;
+                height: 30px;
+                padding: 0 10px;
+            }
+            #retryRecovery {
+                background: var(--working);
+                border-color: var(--working);
+                color: white;
+            }
             #selectedText {
                 border-left: 3px solid var(--accent);
                 color: var(--muted);
@@ -120,6 +143,11 @@
     <div id="previewPanel">
         <div id="previewMeta">Preview</div>
         <div id="previewText">Waiting for speech.</div>
+        <div id="recoveryActions">
+            <button id="retryRecovery" type="button">Retry Saved Audio</button>
+            <button id="copyPartial" type="button">Copy Partial Text</button>
+            <button id="copyRecoveryCommand" type="button">Copy Retry Command</button>
+        </div>
     </div>
     <div id="runtimeInfo">Loading runtime config...</div>
     <script src="./src/renderer/init.js"></script>

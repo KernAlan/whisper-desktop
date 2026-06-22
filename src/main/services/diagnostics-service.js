@@ -13,6 +13,7 @@ class DiagnosticsService {
     this.pasteSamples = [];
     this.summaryEvery = 10;
     this.transcriptHistory = [];
+    this.lastCommand = null;
     this._transcriptListener = null;
   }
 
@@ -71,7 +72,7 @@ class DiagnosticsService {
     }
     if (type === "pipeline-latency") {
       this.logger.log(
-        `[PERF] pipeline=${payload.totalMs}ms pre=${payload.preprocessMs || 0}ms tx=${payload.transcribeMs}ms paste=${payload.pasteMs || 0}ms restore=${payload.restoreMs || 0}ms mode=${payload.clipboardRestoreMode || "unknown"} bytes=${payload.bytes}`
+        `[PERF] pipeline=${payload.totalMs}ms pre=${payload.preprocessMs || 0}ms tx=${payload.transcribeMs}ms polish=${payload.polishMs || 0}ms paste=${payload.pasteMs || 0}ms chunks=${payload.pasteChunks || 0} restore=${payload.restoreMs || 0}ms mode=${payload.clipboardRestoreMode || "unknown"} bytes=${payload.bytes}`
       );
       if (Number.isFinite(payload.totalMs)) {
         this.pipelineSamples.push(Number(payload.totalMs));
@@ -83,9 +84,12 @@ class DiagnosticsService {
         this.pasteSamples.push(Number(payload.pasteMs));
       }
 
-      if (payload.transcript && typeof payload.transcript === "string") {
+      const transcriptText = typeof payload.outputText === "string" && payload.outputText.trim()
+        ? payload.outputText
+        : payload.transcript;
+      if (transcriptText && typeof transcriptText === "string") {
         const entry = {
-          text: payload.transcript,
+          text: transcriptText,
           timestamp: Date.now(),
           durationMs: payload.transcribeMs || 0,
           bytes: payload.bytes || 0,
@@ -95,10 +99,11 @@ class DiagnosticsService {
         if (this.transcriptHistory.length > 50) {
           this.transcriptHistory.shift();
         }
-        const preview = payload.transcript.length > 80
-          ? payload.transcript.slice(0, 77) + "..."
-          : payload.transcript;
-        this.logger.log(`[Transcript] (${payload.transcript.length} chars) ${preview}`);
+        const preview = transcriptText.length > 80
+          ? transcriptText.slice(0, 77) + "..."
+          : transcriptText;
+        const label = payload.polished ? "Transcript polished" : "Transcript";
+        this.logger.log(`[${label}] (${transcriptText.length} chars) ${preview}`);
         if (this._transcriptListener) {
           try { this._transcriptListener(entry); } catch (_) { /* ignore */ }
         }
@@ -108,8 +113,16 @@ class DiagnosticsService {
         const preview = payload.commandInstruction.length > 80
           ? payload.commandInstruction.slice(0, 77) + "..."
           : payload.commandInstruction;
+        this.lastCommand = {
+          timestamp: Date.now(),
+          instruction: payload.commandInstruction,
+          selectedChars: payload.commandSelectedChars || 0,
+          selectionOk: payload.commandSelectionOk !== false,
+          outputChars: payload.commandOutputChars || 0,
+          pasteOk: payload.pasteOk,
+        };
         this.logger.log(
-          `[Command] instruction="${preview}" selectedChars=${payload.commandSelectedChars || 0}`
+          `[Command] instruction="${preview}" selectedChars=${payload.commandSelectedChars || 0} selectionOk=${payload.commandSelectionOk !== false} outputChars=${payload.commandOutputChars || 0}`
         );
       }
 
@@ -173,6 +186,45 @@ class DiagnosticsService {
   getTranscriptHistory(n) {
     if (!n || n >= this.transcriptHistory.length) return this.transcriptHistory.slice();
     return this.transcriptHistory.slice(-n);
+  }
+
+  getLastCommand() {
+    return this.lastCommand;
+  }
+
+  suggestDictionaryTerms(existingTerms = [], limit = 12) {
+    const existing = new Set(
+      (existingTerms || []).map((term) => String(term || "").toLowerCase())
+    );
+    const commonWords = new Set([
+      "The", "This", "That", "There", "These", "Those", "Then", "When", "Where", "What",
+      "Why", "How", "And", "But", "For", "With", "From", "Into", "About", "Okay", "So",
+      "I", "We", "You", "They", "He", "She", "It", "A", "An", "To", "Of", "In", "On",
+    ]);
+    const scores = new Map();
+
+    for (const entry of this.transcriptHistory.slice(-10)) {
+      const text = entry.text || "";
+      const matches = text.match(/\b[A-Za-z][A-Za-z0-9'._-]{1,}\b/g) || [];
+      for (const token of matches) {
+        const cleaned = token.replace(/^['._-]+|['._-]+$/g, "");
+        if (cleaned.length < 3 || commonWords.has(cleaned)) continue;
+        if (existing.has(cleaned.toLowerCase())) continue;
+
+        const isAcronym = /^[A-Z0-9]{2,}$/.test(cleaned) && /[A-Z]/.test(cleaned);
+        const isProper = /^[A-Z][a-z]+(?:[A-Z][A-Za-z0-9]+)?$/.test(cleaned);
+        const isProductLike = /[a-z][A-Z]|[A-Za-z]+\d|\d[A-Za-z]+|[-_.]/.test(cleaned);
+        if (!isAcronym && !isProper && !isProductLike) continue;
+
+        const current = scores.get(cleaned) || 0;
+        scores.set(cleaned, current + (isAcronym ? 3 : isProductLike ? 2 : 1));
+      }
+    }
+
+    return [...scores.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, limit)
+      .map(([term]) => term);
   }
 
   setTranscriptListener(fn) {

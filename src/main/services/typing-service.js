@@ -5,10 +5,18 @@ const ks = require("node-key-sender");
 const execFileAsync = promisify(execFile);
 
 class TypingService {
-  constructor({ logger, restoreMode = "deferred", restoreDelayMs = 120 }) {
+  constructor({
+    logger,
+    restoreMode = "deferred",
+    restoreDelayMs = 120,
+    pasteChunkChars = 1500,
+    pasteChunkDelayMs = 80,
+  }) {
     this.logger = logger || console;
     this.restoreMode = restoreMode;
     this.restoreDelayMs = restoreDelayMs;
+    this.pasteChunkChars = pasteChunkChars;
+    this.pasteChunkDelayMs = pasteChunkDelayMs;
   }
 
   setRestoreConfig({ restoreMode, restoreDelayMs }) {
@@ -18,11 +26,21 @@ class TypingService {
     }
   }
 
-  async pasteText(text) {
+  setPasteConfig({ pasteChunkChars, pasteChunkDelayMs }) {
+    if (Number.isFinite(pasteChunkChars) && pasteChunkChars >= 250) {
+      this.pasteChunkChars = pasteChunkChars;
+    }
+    if (Number.isFinite(pasteChunkDelayMs) && pasteChunkDelayMs >= 10) {
+      this.pasteChunkDelayMs = pasteChunkDelayMs;
+    }
+  }
+
+  async pasteText(text, { onProgress } = {}) {
     let clipboardSnapshot = null;
     const startedAt = Date.now();
     let pasteMs = 0;
     let restoreMs = 0;
+    const chunks = this._splitTextForPaste(String(text || ""), this.pasteChunkChars);
 
     const restoreClipboard = async () => {
       if (!clipboardSnapshot || this.restoreMode === "off") {
@@ -45,32 +63,18 @@ class TypingService {
 
     try {
       if (this.restoreMode !== "off") {
-        clipboardSnapshot = clipboard.availableFormats().map((format) => ({
-          format,
-          data: clipboard.readBuffer(format),
-        }));
+        clipboardSnapshot = this._captureClipboardSnapshot();
       }
 
-      clipboard.writeText(text);
-      if (process.platform === "darwin") {
-        await execFileAsync("osascript", [
-          "-e",
-          'tell application "System Events" to keystroke "v" using command down',
-        ]);
-      } else if (process.platform === "win32") {
-        try {
-          await execFileAsync("powershell.exe", [
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "$ws = New-Object -ComObject WScript.Shell; $ws.SendKeys('^v')",
-          ]);
-        } catch (windowsPasteError) {
-          this.logger.warn("Native Windows paste failed, falling back to node-key-sender:", windowsPasteError);
-          await ks.sendCombination(["control", "v"]);
+      for (let i = 0; i < chunks.length; i += 1) {
+        clipboard.writeText(chunks[i]);
+        if (typeof onProgress === "function") {
+          onProgress({ index: i + 1, total: chunks.length, chars: chunks[i].length });
         }
-      } else {
-        await ks.sendCombination(["control", "v"]);
+        await this._sendPasteShortcut();
+        if (chunks.length > 1 && i < chunks.length - 1) {
+          await new Promise((resolve) => setTimeout(resolve, this.pasteChunkDelayMs));
+        }
       }
       pasteMs = Date.now() - startedAt;
 
@@ -89,6 +93,7 @@ class TypingService {
         pasteMs,
         restoreMs,
         restoreMode: this.restoreMode,
+        chunks: chunks.length,
       };
     } catch (error) {
       this.logger.error("Error simulating typing:", error);
@@ -97,18 +102,82 @@ class TypingService {
         pasteMs,
         restoreMs,
         restoreMode: this.restoreMode,
+        chunks: chunks.length,
       };
     }
+  }
+
+  _captureClipboardSnapshot() {
+    return clipboard.availableFormats().map((format) => ({
+      format,
+      data: clipboard.readBuffer(format),
+    }));
+  }
+
+  async _sendPasteShortcut() {
+    if (process.platform === "darwin") {
+      await execFileAsync("osascript", [
+        "-e",
+        'tell application "System Events" to keystroke "v" using command down',
+      ]);
+    } else if (process.platform === "win32") {
+      try {
+        await execFileAsync("powershell.exe", [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "$ws = New-Object -ComObject WScript.Shell; $ws.SendKeys('^v')",
+        ]);
+      } catch (windowsPasteError) {
+        this.logger.warn("Native Windows paste failed, falling back to node-key-sender:", windowsPasteError);
+        await ks.sendCombination(["control", "v"]);
+      }
+    } else {
+      await ks.sendCombination(["control", "v"]);
+    }
+  }
+
+  _splitTextForPaste(text, maxChars) {
+    const value = String(text || "");
+    if (!value) return [""];
+    if (value.length <= maxChars) return [value];
+
+    const chunks = [];
+    let offset = 0;
+
+    while (offset < value.length) {
+      const remaining = value.length - offset;
+      if (remaining <= maxChars) {
+        chunks.push(value.slice(offset));
+        break;
+      }
+
+      const hardEnd = offset + maxChars;
+      const window = value.slice(offset, hardEnd);
+      const breakIndex = Math.max(
+        window.lastIndexOf("\n\n"),
+        window.lastIndexOf("\n"),
+        window.lastIndexOf(". "),
+        window.lastIndexOf("? "),
+        window.lastIndexOf("! "),
+        window.lastIndexOf(" ")
+      );
+
+      const splitAt = breakIndex >= Math.floor(maxChars * 0.5)
+        ? offset + breakIndex + 1
+        : hardEnd;
+      chunks.push(value.slice(offset, splitAt));
+      offset = splitAt;
+    }
+
+    return chunks;
   }
 
   async captureSelectedText() {
     let clipboardSnapshot = null;
 
     try {
-      clipboardSnapshot = clipboard.availableFormats().map((format) => ({
-        format,
-        data: clipboard.readBuffer(format),
-      }));
+      clipboardSnapshot = this._captureClipboardSnapshot();
 
       clipboard.clear();
       if (process.platform === "darwin") {
@@ -128,10 +197,20 @@ class TypingService {
       }
 
       await new Promise((resolve) => setTimeout(resolve, 80));
-      return clipboard.readText() || "";
+      const text = clipboard.readText() || "";
+      return {
+        ok: true,
+        text,
+        chars: text.length,
+      };
     } catch (error) {
       this.logger.warn("Failed to capture selected text:", error);
-      return "";
+      return {
+        ok: false,
+        text: "",
+        chars: 0,
+        error: error.message,
+      };
     } finally {
       if (clipboardSnapshot && this.restoreMode !== "off") {
         try {

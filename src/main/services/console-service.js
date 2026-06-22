@@ -1,7 +1,19 @@
 const net = require("net");
 
 class ConsoleService {
-  constructor({ runtimeSettings, applySettings, setupShortcut, diagnostics, logger, mainWindow, app, transcriptionService, dictionaryService }) {
+  constructor({
+    runtimeSettings,
+    applySettings,
+    setupShortcut,
+    diagnostics,
+    logger,
+    mainWindow,
+    app,
+    transcriptionService,
+    dictionaryService,
+    openSettings,
+    resetSettings,
+  }) {
     this.runtimeSettings = runtimeSettings;
     this.applySettings = applySettings;
     this.setupShortcut = setupShortcut;
@@ -11,6 +23,8 @@ class ConsoleService {
     this.app = app;
     this.transcriptionService = transcriptionService;
     this.dictionaryService = dictionaryService;
+    this.openSettings = typeof openSettings === "function" ? openSettings : null;
+    this.resetSettings = typeof resetSettings === "function" ? resetSettings : null;
     this._conn = null;
     this._buffer = "";
     this._oneshot = false;
@@ -111,11 +125,14 @@ class ConsoleService {
     if (cmd === "status") return this._cmdStatus();
     if (cmd === "quit" || cmd === "exit") return this._cmdQuit();
     if (cmd === "perf") return this._cmdPerf();
+    if (cmd === "settings") return this._cmdSettings();
+    if (cmd === "reset" && parts[1]?.toLowerCase() === "settings") return this._cmdResetSettings();
     if (cmd === "devices") return this._cmdDevices();
     if (cmd === "set") return this._cmdSet(parts.slice(1));
     if (cmd === "refresh" && parts[1]?.toLowerCase() === "mic") return this._cmdRefreshMic();
     if (cmd === "test" && parts[1]?.toLowerCase() === "mic") return this._cmdTestMic();
     if (cmd === "last") return this._cmdLast(parts.slice(1));
+    if (cmd === "last-command") return this._cmdLastCommand();
     if (cmd === "history") return this._cmdHistory();
     if (cmd === "recovery") return this._cmdRecovery();
     if (cmd === "retry") return this._cmdRetry(parts.slice(1));
@@ -131,7 +148,8 @@ class ConsoleService {
       "",
       kv("status", "Show current config"),
       kv("set model <name>", "Change transcription model"),
-      kv("set text-model <name>", "Change command-mode text model"),
+      kv("set text-model <name>", "Change cleanup/command text model"),
+      kv("set dictation <mode>", "fast | polished"),
       kv("set hotkey <combo>", "Change global shortcut"),
       kv("set command-hotkey <combo>", "Change command-mode shortcut"),
       kv("set injection <mode>", "deferred | blocking | off"),
@@ -143,13 +161,18 @@ class ConsoleService {
       kv("test mic", "Test microphone levels"),
       kv("devices", "List audio inputs"),
       kv("perf", "Performance stats"),
+      kv("settings", "Open settings window"),
+      kv("reset settings", "Reset saved settings to .env/defaults"),
       kv("last [n]", "Show last N transcriptions (default 1)"),
+      kv("last-command", "Show last command-mode run"),
       kv("history", "List recent transcriptions"),
       kv("dict", "List dictionary terms"),
+      kv("dict suggest", "Suggest terms from recent transcripts"),
+      kv("dict add-suggested [n]", "Add suggested terms"),
       kv("dict add <term>", "Add a dictionary term"),
       kv("dict remove <term>", "Remove a dictionary term"),
       kv("recovery", "List saved recordings"),
-      kv("retry <filename>", "Re-transcribe a recovery file"),
+      kv("retry <latest|file|session>", "Re-transcribe saved audio"),
       kv("quit", "Exit"),
       "",
     ];
@@ -164,6 +187,9 @@ class ConsoleService {
       kv("Model", s.model),
       kv("Fallback", s.fallbackModel),
       kv("Text Model", s.textModel),
+      kv("Dictation", s.dictationMode),
+      kv("Polish Chunks", `${s.polishChunkWords} words`),
+      kv("Polish Max", `${s.polishMaxWords} words`),
       kv("Hotkey", s.shortcut),
       kv("Command Hotkey", s.commandShortcut),
       kv("Injection", s.clipboardRestoreMode),
@@ -171,6 +197,8 @@ class ConsoleService {
       kv("Timeslice", `${s.recorderTimesliceMs}ms`),
       kv("Preview", `${s.previewIntervalMs}ms`),
       kv("Done Hide", `${s.doneHideWindowMs}ms`),
+      kv("Paste Chunks", `${s.pasteChunkChars} chars`),
+      kv("Paste Delay", `${s.pasteChunkDelayMs}ms`),
       kv("Timeout", `${s.timeoutMs}ms`),
       kv("Max Queue", String(s.maxQueue)),
       kv("Dictionary", `${this.dictionaryService?.list?.().length || 0} terms`),
@@ -224,6 +252,16 @@ class ConsoleService {
       return;
     }
 
+    if (key === "dictation" || key === "dictation-mode") {
+      if (!["fast", "polished"].includes(value)) {
+        this._sendLine("  Invalid dictation mode. Use: fast | polished");
+        return;
+      }
+      this.applySettings({ dictationMode: value });
+      this._sendLine(`  Dictation -> ${this.runtimeSettings.dictationMode}`);
+      return;
+    }
+
     if (key === "hotkey") {
       this.applySettings({ shortcut: value });
       this.setupShortcut();
@@ -250,8 +288,18 @@ class ConsoleService {
 
     if (key === "profile") {
       const profiles = {
-        fast: { model: "whisper-large-v3-turbo", clipboardRestoreMode: "off", recorderTimesliceMs: 100 },
-        balanced: { model: "whisper-large-v3", clipboardRestoreMode: "deferred", recorderTimesliceMs: 150 },
+        fast: {
+          model: "whisper-large-v3-turbo",
+          clipboardRestoreMode: "off",
+          recorderTimesliceMs: 100,
+          dictationMode: "fast",
+        },
+        balanced: {
+          model: "whisper-large-v3",
+          clipboardRestoreMode: "deferred",
+          recorderTimesliceMs: 150,
+          dictationMode: "polished",
+        },
       };
       const profile = profiles[value.toLowerCase()];
       if (!profile) {
@@ -260,7 +308,7 @@ class ConsoleService {
       }
       this.applySettings(profile);
       this._sendLine(`  Profile "${value}" applied`);
-      this._sendLine(`  model=${this.runtimeSettings.model}  injection=${this.runtimeSettings.clipboardRestoreMode}  timeslice=${this.runtimeSettings.recorderTimesliceMs}ms`);
+      this._sendLine(`  model=${this.runtimeSettings.model}  dictation=${this.runtimeSettings.dictationMode}  injection=${this.runtimeSettings.clipboardRestoreMode}  timeslice=${this.runtimeSettings.recorderTimesliceMs}ms`);
       return;
     }
 
@@ -376,15 +424,40 @@ class ConsoleService {
       return;
     }
     this._sendLine("");
-    this._sendLine(`  Recovery files (${files.length}):`);
-    for (const f of files) {
-      const sizeMB = (f.size / (1024 * 1024)).toFixed(1);
-      const date = f.modified.toISOString().replace("T", " ").slice(0, 19);
-      this._sendLine(`  ${f.name}  ${sizeMB}MB  ${date}`);
+    this._sendLine(`  Recovery (${files.length} file${files.length === 1 ? "" : "s"}):`);
+    const groups = this._groupRecoveryFiles(files);
+    for (const group of groups) {
+      const sizeMB = (group.size / (1024 * 1024)).toFixed(1);
+      const date = group.modified.toISOString().replace("T", " ").slice(0, 19);
+      if (group.total > 1) {
+        this._sendLine(`  ${group.sessionId}  ${group.count}/${group.total} chunks  ${sizeMB}MB  ${date}`);
+      } else {
+        this._sendLine(`  ${group.name}  ${sizeMB}MB  ${date}`);
+      }
     }
     this._sendLine("");
-    this._sendLine('  Use "retry <filename>" to re-transcribe.');
+    this._sendLine('  Use "retry latest", "retry <filename>", or "retry <session-id>".');
     this._sendLine("");
+  }
+
+  _groupRecoveryFiles(files) {
+    const groups = new Map();
+    for (const file of files) {
+      const key = file.total > 1 && file.sessionId ? file.sessionId : file.name;
+      const group = groups.get(key) || {
+        sessionId: file.sessionId,
+        name: file.name,
+        total: file.total || 1,
+        count: 0,
+        size: 0,
+        modified: file.modified,
+      };
+      group.count += 1;
+      group.size += file.size || 0;
+      if (file.modified > group.modified) group.modified = file.modified;
+      groups.set(key, group);
+    }
+    return Array.from(groups.values()).sort((a, b) => b.modified - a.modified);
   }
 
   async _cmdRetry(args) {
@@ -393,11 +466,19 @@ class ConsoleService {
       return;
     }
     if (!args.length) {
-      this._sendLine('  Usage: retry <filename>');
+      this._sendLine('  Usage: retry <latest|filename|session-id>');
       this._sendLine('  Run "recovery" to see available files.');
       return;
     }
-    const filename = args[0];
+    let filename = args[0];
+    if (filename.toLowerCase() === "latest") {
+      const files = await this.transcriptionService.listRecoveryFiles();
+      if (!files.length) {
+        this._sendLine("  No recovery files found.");
+        return;
+      }
+      filename = files[0].name;
+    }
     this._sendLine(`  Retrying ${filename}...`);
     try {
       const text = await this.transcriptionService.retryRecoveryFile(filename);
@@ -417,6 +498,38 @@ class ConsoleService {
     }
   }
 
+  _cmdLastCommand() {
+    const entry = this.diagnostics.getLastCommand();
+    if (!entry) {
+      this._sendLine("  No command-mode runs yet.");
+      return;
+    }
+    const date = new Date(entry.timestamp).toLocaleTimeString();
+    const paste = entry.pasteOk === true ? "ok" : entry.pasteOk === false ? "FAIL" : "n/a";
+    this._sendLine("");
+    this._sendLine(`  [${date}] selected=${entry.selectedChars} selectionOk=${entry.selectionOk} output=${entry.outputChars} paste=${paste}`);
+    this._sendLine(`  ${entry.instruction}`);
+    this._sendLine("");
+  }
+
+  _cmdSettings() {
+    if (!this.openSettings) {
+      this._sendLine("  Settings window is not available.");
+      return;
+    }
+    this.openSettings();
+    this._sendLine("  Settings opened.");
+  }
+
+  _cmdResetSettings() {
+    if (!this.resetSettings) {
+      this._sendLine("  Reset settings is not available.");
+      return;
+    }
+    this.resetSettings();
+    this._sendLine("  Settings reset to defaults.");
+  }
+
   async _cmdDictionary(args) {
     if (!this.dictionaryService) {
       this._sendLine("  Dictionary service not available.");
@@ -426,6 +539,38 @@ class ConsoleService {
     const action = args[0]?.toLowerCase();
     const term = args.slice(1).join(" ").trim();
     try {
+      if (action === "suggest") {
+        const suggestions = this.diagnostics.suggestDictionaryTerms(this.dictionaryService.list());
+        if (!suggestions.length) {
+          this._sendLine("  No suggestions from recent transcripts.");
+          return;
+        }
+        this._sendLine("");
+        this._sendLine(`  Suggestions (${suggestions.length}):`);
+        suggestions.forEach((item, index) => this._sendLine(`  ${index + 1}. ${item}`));
+        this._sendLine("");
+        this._sendLine('  Use "dict add-suggested [n]" to add them.');
+        this._sendLine("");
+        return;
+      }
+
+      if (action === "add-suggested") {
+        const limit = Math.max(1, Math.min(25, Number(args[1]) || 12));
+        const suggestions = this.diagnostics.suggestDictionaryTerms(
+          this.dictionaryService.list(),
+          limit
+        );
+        if (!suggestions.length) {
+          this._sendLine("  No suggestions to add.");
+          return;
+        }
+        for (const suggestion of suggestions) {
+          await this.dictionaryService.add(suggestion);
+        }
+        this._sendLine(`  Added ${suggestions.length} suggested term(s).`);
+        return;
+      }
+
       if (action === "add") {
         await this.dictionaryService.add(term);
         this._sendLine(`  Added dictionary term: ${term}`);

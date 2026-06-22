@@ -7,10 +7,15 @@ test("loadConfig applies defaults", () => {
   assert.equal(config.shortcut, "CommandOrControl+Shift+Space");
   assert.equal(config.commandShortcut, "CommandOrControl+Shift+E");
   assert.equal(config.app.doneHideWindowMs, 900);
-  assert.equal(config.app.previewIntervalMs, 2500);
+  assert.equal(config.app.previewIntervalMs, 1500);
+  assert.equal(config.app.dictationMode, "polished");
+  assert.equal(config.app.pasteChunkChars, 1500);
+  assert.equal(config.app.pasteChunkDelayMs, 80);
   assert.equal(config.transcription.model, "whisper-large-v3-turbo");
   assert.equal(config.text.model, "llama-3.1-8b-instant");
-  assert.equal(config.transcription.timeoutMs, 25000);
+  assert.equal(config.text.polishChunkWords, 450);
+  assert.equal(config.text.polishMaxWords, 2500);
+  assert.equal(config.transcription.timeoutMs, 60000);
 });
 
 test("validateConfig detects missing key", () => {
@@ -26,5 +31,36 @@ test("validateConfig detects preview interval that is too low", () => {
   });
   const issues = validateConfig(config);
   assert.ok(issues.some((issue) => issue.includes("APP_PREVIEW_INTERVAL_MS")));
+});
+
+test("validateConfig detects invalid dictation mode", () => {
+  const config = loadConfig({
+    GROQ_API_KEY: "key",
+    APP_DICTATION_MODE: "fancy",
+  });
+  const issues = validateConfig(config);
+  assert.ok(issues.some((issue) => issue.includes("APP_DICTATION_MODE")));
+});
+
+test("validateConfig detects invalid polish limits", () => {
+  const config = loadConfig({
+    GROQ_API_KEY: "key",
+    GROQ_POLISH_CHUNK_WORDS: "50",
+    GROQ_POLISH_MAX_WORDS: "40",
+  });
+  const issues = validateConfig(config);
+  assert.ok(issues.some((issue) => issue.includes("GROQ_POLISH_CHUNK_WORDS")));
+  assert.ok(issues.some((issue) => issue.includes("GROQ_POLISH_MAX_WORDS")));
+});
+
+test("validateConfig detects invalid paste chunk config", () => {
+  const config = loadConfig({
+    GROQ_API_KEY: "key",
+    APP_PASTE_CHUNK_CHARS: "100",
+    APP_PASTE_CHUNK_DELAY_MS: "5",
+  });
+  const issues = validateConfig(config);
+  assert.ok(issues.some((issue) => issue.includes("APP_PASTE_CHUNK_CHARS")));
+  assert.ok(issues.some((issue) => issue.includes("APP_PASTE_CHUNK_DELAY_MS")));
 });
 

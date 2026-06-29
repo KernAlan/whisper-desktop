@@ -38,6 +38,16 @@ const runtimeSettingsService = new RuntimeSettingsService({
   logger,
 });
 const runtimeSettings = runtimeSettingsService.loadSync();
+const COMMAND_SHORTCUT_FALLBACKS = [
+  "CommandOrControl+Alt+E",
+  "CommandOrControl+Shift+J",
+];
+const shortcutRegistration = {
+  shortcutOk: false,
+  commandShortcutOk: false,
+  registeredShortcut: "",
+  registeredCommandShortcut: "",
+};
 const diagnostics = new DiagnosticsService(config, logger);
 const windowManager = new WindowManager({ hideWindowMs: config.app.hideWindowMs });
 const dictionaryService = new DictionaryService({ filePath: dictionaryPath, logger });
@@ -86,7 +96,12 @@ if (!hasSingleInstanceLock) {
 
 function setupShortcut() {
   globalShortcut.unregisterAll();
-  const dictationOk = globalShortcut.register(runtimeSettings.shortcut, () => {
+  shortcutRegistration.shortcutOk = false;
+  shortcutRegistration.commandShortcutOk = false;
+  shortcutRegistration.registeredShortcut = "";
+  shortcutRegistration.registeredCommandShortcut = "";
+
+  const dictationHandler = () => {
     windowManager.showWindow({ autoHide: false });
     const windows = BrowserWindow.getAllWindows();
     windows.forEach((window) =>
@@ -95,12 +110,17 @@ function setupShortcut() {
         dictationMode: runtimeSettings.dictationMode,
       })
     );
-  });
-  if (!dictationOk) {
+  };
+
+  const dictationOk = globalShortcut.register(runtimeSettings.shortcut, dictationHandler);
+  if (dictationOk) {
+    shortcutRegistration.shortcutOk = true;
+    shortcutRegistration.registeredShortcut = runtimeSettings.shortcut;
+  } else {
     logger.error(`Failed to register global shortcut: ${runtimeSettings.shortcut}`);
   }
 
-  const commandOk = globalShortcut.register(runtimeSettings.commandShortcut, async () => {
+  const commandHandler = async () => {
     const selection = await typingService.captureSelectedText();
     windowManager.showWindow({ autoHide: false });
     const windows = BrowserWindow.getAllWindows();
@@ -111,10 +131,32 @@ function setupShortcut() {
         selection,
       })
     );
-  });
-  if (!commandOk) {
-    logger.error(`Failed to register command shortcut: ${runtimeSettings.commandShortcut}`);
+  };
+
+  const commandCandidates = [
+    runtimeSettings.commandShortcut,
+    ...COMMAND_SHORTCUT_FALLBACKS,
+  ].filter((value, index, all) => value && all.indexOf(value) === index);
+  for (const shortcut of commandCandidates) {
+    if (globalShortcut.register(shortcut, commandHandler)) {
+      shortcutRegistration.commandShortcutOk = true;
+      shortcutRegistration.registeredCommandShortcut = shortcut;
+      if (shortcut !== runtimeSettings.commandShortcut) {
+        logger.warn(
+          `Command shortcut unavailable: ${runtimeSettings.commandShortcut}. Using ${shortcut} for this session.`
+        );
+      }
+      break;
+    }
   }
+
+  if (!shortcutRegistration.commandShortcutOk) {
+    logger.error(
+      `Failed to register command shortcut: ${runtimeSettings.commandShortcut}. Tried: ${commandCandidates.join(", ")}`
+    );
+  }
+
+  return { ...shortcutRegistration };
 }
 
 function syncRuntimeServices() {
@@ -198,6 +240,10 @@ function getRuntimeConfigPayload() {
   return {
     shortcut: runtimeSettings.shortcut,
     commandShortcut: runtimeSettings.commandShortcut,
+    shortcutOk: shortcutRegistration.shortcutOk,
+    commandShortcutOk: shortcutRegistration.commandShortcutOk,
+    registeredShortcut: shortcutRegistration.registeredShortcut,
+    registeredCommandShortcut: shortcutRegistration.registeredCommandShortcut,
     model: runtimeSettings.model,
     fallbackModel: runtimeSettings.fallbackModel,
     textModel: runtimeSettings.textModel,

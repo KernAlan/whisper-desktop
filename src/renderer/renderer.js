@@ -43,11 +43,17 @@ function renderRuntimeConfig(config) {
   runtimeConfig = config;
   const runtimeInfo = document.getElementById("runtimeInfo");
   const hotkeyHint = document.getElementById("hotkeyHint");
+  const dictationShortcut = config.shortcutOk === false
+    ? "Dictation shortcut unavailable"
+    : `${platformShortcutDisplay(config.registeredShortcut || config.shortcut)} dictates`;
+  const commandShortcut = config.commandShortcutOk === false
+    ? "Command shortcut unavailable"
+    : `${platformShortcutDisplay(config.registeredCommandShortcut || config.commandShortcut)} edits selection`;
   if (runtimeInfo) {
     runtimeInfo.textContent = `ASR: ${config.model} | Text: ${config.textModel} | Dictation: ${config.dictationMode} | Dictionary: ${(config.dictionaryTerms || []).length}`;
   }
   if (hotkeyHint) {
-    hotkeyHint.textContent = `${platformShortcutDisplay(config.shortcut)} dictates | ${platformShortcutDisplay(config.commandShortcut)} edits selection`;
+    hotkeyHint.textContent = `${dictationShortcut} | ${commandShortcut}`;
   }
 }
 

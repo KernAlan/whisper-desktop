@@ -34,6 +34,32 @@ test("transcribe failure saves recovery file and returns recovery metadata", asy
   fs.removeSync(recoveryDir);
 });
 
+test("preview transcription failures are skipped instead of thrown", async () => {
+  const recoveryDir = fs.mkdtempSync(path.join(os.tmpdir(), "whisper-recovery-"));
+  const warnings = [];
+  const service = new TranscriptionService({
+    apiKey: "test-key",
+    model: "whisper-large-v3-turbo",
+    fallbackModel: "whisper-large-v3",
+    timeoutMs: 1000,
+    maxQueue: 2,
+    recoveryDir,
+    logger: { log() {}, warn(message) { warnings.push(message); }, error() {} },
+  });
+  service._transcribeOne = async () => {
+    throw new Error("forced preview failure");
+  };
+
+  const result = await service.transcribePreview(Buffer.from("not real audio"));
+
+  assert.equal(result.skipped, true);
+  assert.equal(result.text, "");
+  assert.match(result.error, /forced preview failure/);
+  assert.equal(warnings.length, 1);
+
+  fs.removeSync(recoveryDir);
+});
+
 test("chunked recovery retries a saved session in order", async () => {
   const recoveryDir = fs.mkdtempSync(path.join(os.tmpdir(), "whisper-recovery-"));
   const service = new TranscriptionService({

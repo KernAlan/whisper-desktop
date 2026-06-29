@@ -5,6 +5,7 @@ const Groq = require("groq-sdk");
 
 const MAX_RECOVERY_SESSIONS = 10;
 const PREVIEW_TIMEOUT_MS = 8000;
+const PREVIEW_WARNING_THROTTLE_MS = 30000;
 
 function withTimeout(promise, timeoutMs, message) {
   let timeoutId;
@@ -37,6 +38,8 @@ class TranscriptionService {
     this.groq = new Groq({ apiKey });
     this.active = false;
     this.previewActive = false;
+    this.lastPreviewWarningAt = 0;
+    this.lastPreviewWarningMessage = "";
     this.queue = [];
     this.recoveryDir = recoveryDir || path.join(os.tmpdir(), "whisper-desktop-recovery");
   }
@@ -124,10 +127,31 @@ class TranscriptionService {
         timeoutMs: Math.min(this.timeoutMs, PREVIEW_TIMEOUT_MS),
       });
       return { skipped: false, text: result.text };
+    } catch (error) {
+      this._warnPreviewFailure(error);
+      return {
+        skipped: true,
+        text: "",
+        error: error?.message || "Preview transcription failed",
+      };
     } finally {
       this.previewActive = false;
       await fs.unlink(tempFilePath).catch(() => {});
     }
+  }
+
+  _warnPreviewFailure(error) {
+    const message = error?.message || "Preview transcription failed";
+    const now = Date.now();
+    if (
+      message === this.lastPreviewWarningMessage &&
+      now - this.lastPreviewWarningAt < PREVIEW_WARNING_THROTTLE_MS
+    ) {
+      return;
+    }
+    this.lastPreviewWarningAt = now;
+    this.lastPreviewWarningMessage = message;
+    this.logger.warn(`[Preview] ${message}`);
   }
 
   async _transcribeOne(tempFilePath, options = {}) {

@@ -260,6 +260,8 @@ function getRuntimeConfigPayload() {
     pasteChunkChars: runtimeSettings.pasteChunkChars,
     pasteChunkDelayMs: runtimeSettings.pasteChunkDelayMs,
     dictionaryTerms: dictionaryService.list(),
+    apiKeyOk: Boolean(config.transcription.apiKey),
+    configIssues,
   };
 }
 
@@ -271,13 +273,26 @@ function broadcastRuntimeConfig() {
   return nextConfig;
 }
 
-function transcriptionErrorPayload(error) {
+function transcriptionErrorPayload(error, recoveryFiles = []) {
   return {
     ok: false,
     error: error?.message || "Transcription failed",
-    recoveryFiles: Array.isArray(error?.recoveryFiles) ? error.recoveryFiles : [],
+    recoveryFiles: Array.isArray(error?.recoveryFiles) && error.recoveryFiles.length
+      ? error.recoveryFiles
+      : recoveryFiles,
     partialText: typeof error?.partialText === "string" ? error.partialText : "",
   };
+}
+
+async function saveRecoveryForFailedBuffer(arrayBuffer, error) {
+  if (Array.isArray(error?.recoveryFiles) && error.recoveryFiles.length) return [];
+  try {
+    const recovery = await transcriptionService.saveAudioBufferToRecovery(arrayBuffer);
+    return recovery ? [recovery] : [];
+  } catch (recoveryError) {
+    logger.error("[Recovery] Failed to save failed transcription buffer:", recoveryError);
+    return [];
+  }
 }
 
 async function checkAndRequestMicrophonePermission() {
@@ -338,7 +353,8 @@ ipcMain.handle("transcribe-audio", async (_event, arrayBuffer) => {
       text: await transcriptionService.transcribe(arrayBuffer),
     };
   } catch (error) {
-    return transcriptionErrorPayload(error);
+    const recoveryFiles = await saveRecoveryForFailedBuffer(arrayBuffer, error);
+    return transcriptionErrorPayload(error, recoveryFiles);
   }
 });
 
@@ -429,6 +445,14 @@ ipcMain.handle("hide-window", () => {
   windowManager.hideWindow();
 });
 
+ipcMain.handle("show-window", () => {
+  windowManager.showWindow({ autoHide: false });
+});
+
+ipcMain.handle("open-settings", () => {
+  windowManager.showSettingsWindow();
+});
+
 ipcMain.handle("schedule-hide-window", (_event, delayMs) => {
   windowManager.scheduleHide(Number(delayMs) || undefined);
 });
@@ -475,6 +499,14 @@ ipcMain.handle("dictionary-suggest", async () => {
 });
 
 ipcMain.on("renderer-diagnostics", (_event, payload) => {
+  if (
+    payload?.type === "mic-init-error" ||
+    payload?.type === "paste-failed" ||
+    payload?.type === "recovery-saved" ||
+    payload?.type === "api-key-missing"
+  ) {
+    windowManager.showWindow({ autoHide: false });
+  }
   diagnostics.logRendererPayload(payload);
 });
 

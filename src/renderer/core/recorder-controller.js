@@ -1,4 +1,5 @@
 import { RecorderStateMachine, STATES } from "./recorder-state-machine.js";
+import { formatError, microphoneStatusForError, userMessageForFailure } from "./error-utils.js";
 
 const CHUNK_SIZE_LIMIT = 20 * 1024 * 1024; // 20MB
 const PREVIEW_SIZE_LIMIT = 2 * 1024 * 1024; // Preview is UX only; keep long recordings for final transcription.
@@ -66,8 +67,10 @@ export class RecorderController {
     this.processingStartedAt = 0;
     this.previewText = "";
     this.previewPartCount = 0;
+    this.previewFailureCount = 0;
     this.previewRequestActive = false;
     this.lastRecovery = null;
+    this.lastOutputText = "";
     this.pendingRecoveryCleanupTarget = "";
     this.stateMachine = new RecorderStateMachine(({ next, detail }) => {
       if (next === STATES.ERROR) this.updateStatus(detail || "Error", "red");
@@ -97,12 +100,17 @@ export class RecorderController {
   }
 
   async initialize() {
-    this.stateMachine.transition(STATES.ARMING, "Initializing microphone");
-    await this.requestMicrophoneAccess();
-    await this.audioEngine.ensureStream();
-    const activeDevice = this.audioEngine.getActiveDevice();
-    this.updateStatus(`Ready (${activeDevice.label})`, "black");
-    this.stateMachine.transition(STATES.IDLE, "Ready");
+    try {
+      this.stateMachine.transition(STATES.ARMING, "Initializing microphone");
+      await this.requestMicrophoneAccess();
+      await this.audioEngine.ensureStream();
+      const activeDevice = this.audioEngine.getActiveDevice();
+      this.updateStatus(`Ready (${activeDevice.label})`, "black");
+      this.stateMachine.transition(STATES.IDLE, "Ready");
+    } catch (error) {
+      this.stateMachine.transition(STATES.ERROR, microphoneStatusForError(error));
+      throw error;
+    }
   }
 
   async toggleRecording(options = {}) {
@@ -130,11 +138,13 @@ export class RecorderController {
         await this.cancelHideWindow();
       }
       this.stateMachine.transition(STATES.ARMING, "Preparing recording");
+      await this.requestMicrophoneAccess();
       const stream = await this.audioEngine.ensureStream();
       this.mediaRecorder = new MediaRecorder(stream);
       this.audioChunks = [];
       this.previewText = "";
       this.previewPartCount = 0;
+      this.previewFailureCount = 0;
       this.lastRecovery = null;
       this.pendingRecoveryCleanupTarget = "";
       this.updateRecoveryActions(null);
@@ -163,8 +173,21 @@ export class RecorderController {
       this.startPreviewLoop();
       this.startRecordingStatusLoop();
     } catch (error) {
-      console.error("Error starting recording:", error);
-      this.stateMachine.transition(STATES.ERROR, "Recording failed");
+      console.error(`Error starting recording: ${formatError(error)}`);
+      const status = microphoneStatusForError(error);
+      this.updatePreview(userMessageForFailure(error, status), {
+        mode: this.mode,
+        phase: "error",
+        selectedText: this.selectedText,
+        selection: this.selection,
+      });
+      this.updateRecoveryActions({
+        show: true,
+        retryMic: true,
+        testMic: true,
+        settings: true,
+      });
+      this.stateMachine.transition(STATES.ERROR, status);
     }
   }
 
@@ -224,6 +247,7 @@ export class RecorderController {
       const result = await this.transcribePreview(arrayBuffer);
       if (this.getState() !== STATES.RECORDING || mode !== this.mode) return;
       if (!result?.skipped && result?.text) {
+        this.previewFailureCount = 0;
         this.previewText = String(result.text || "").trim();
         this.previewPartCount += 1;
         this.updatePreview(this.previewText, {
@@ -233,6 +257,14 @@ export class RecorderController {
           selection: this.selection,
           previewParts: this.previewPartCount,
         });
+      } else if (result?.error) {
+        this.previewFailureCount += 1;
+        if (this.previewFailureCount === 3) {
+          this.onDiagnostics({
+            type: "preview-degraded",
+            error: result.error,
+          });
+        }
       }
     } finally {
       this.previewRequestActive = false;
@@ -310,7 +342,19 @@ export class RecorderController {
       bytes = arrayBuffer.byteLength;
 
       if (bytes < 1000) {
+        keepWindowVisible = true;
         this.updateStatus("No audio captured, try again", "red");
+        this.updatePreview("No audio was captured. Check the selected microphone or try a longer recording.", {
+          mode: this.mode,
+          phase: "error",
+          selectedText: this.selectedText,
+          selection: this.selection,
+        });
+        this.updateRecoveryActions({
+          show: true,
+          retryMic: true,
+          testMic: true,
+        });
         this.stateMachine.transition(STATES.IDLE, "No audio");
         return;
       }
@@ -342,7 +386,19 @@ export class RecorderController {
       this.stopProcessingStatusLoop();
 
       if (!transcript || typeof transcript !== "string" || !transcript.trim()) {
+        keepWindowVisible = true;
         this.updateStatus("No transcription, try again", "red");
+        this.updatePreview("No speech was transcribed. Try again, or test the microphone if this repeats.", {
+          mode: this.mode,
+          phase: "error",
+          selectedText: this.selectedText,
+          selection: this.selection,
+        });
+        this.updateRecoveryActions({
+          show: true,
+          retryMic: true,
+          testMic: true,
+        });
         this.stateMachine.transition(STATES.IDLE, "Empty transcript");
         return;
       }
@@ -355,6 +411,7 @@ export class RecorderController {
       restoreMs = output.restoreMs;
       pasteChunks = output.pasteChunks;
       clipboardRestoreMode = output.clipboardRestoreMode;
+      if (!pasteOk) keepWindowVisible = true;
       await this._cleanupRecoveredAudioIfSafe(output);
     } catch (error) {
       console.error("Pipeline error:", error);
@@ -372,7 +429,16 @@ export class RecorderController {
           partialText,
           command,
           mode: this.mode,
+          savedAudio: true,
+          copyPartial: Boolean(partialText),
+          copyCommand: true,
         };
+        this.onDiagnostics({
+          type: "recovery-saved",
+          target,
+          count,
+          partialChars: partialText.length,
+        });
         if (partialText && this.copyText) {
           await this.copyText(partialText).catch(() => {});
         }
@@ -392,7 +458,20 @@ export class RecorderController {
         keepWindowVisible = true;
         this.stateMachine.transition(STATES.IDLE, "Recovery saved");
       } else {
-        this.updateStatus(error?.message || "Error processing audio", "red");
+        keepWindowVisible = true;
+        const message = userMessageForFailure(error, "Error processing audio");
+        this.updateStatus(message, "red");
+        this.updatePreview(message, {
+          mode: this.mode,
+          phase: "error",
+          selectedText: this.selectedText,
+          selection: this.selection,
+        });
+        this.updateRecoveryActions({
+          show: true,
+          copyOutput: Boolean(this.lastOutputText),
+          settings: true,
+        });
         this.stateMachine.transition(STATES.ERROR, "Error processing audio");
       }
     } finally {
@@ -491,6 +570,45 @@ export class RecorderController {
     return true;
   }
 
+  async copyLastOutput() {
+    if (!this.lastOutputText.trim() || !this.copyText) {
+      this.updateStatus("No text to copy", "red");
+      return false;
+    }
+    await this.copyText(this.lastOutputText);
+    this.updateStatus("Text copied", "green");
+    return true;
+  }
+
+  async retryLastPaste() {
+    if (!this.lastOutputText.trim()) {
+      this.updateStatus("No text to paste", "red");
+      return false;
+    }
+
+    this.updateStatus("Retrying paste...", "blue");
+    try {
+      const pasteResult = await this.simulateTyping(this.lastOutputText);
+      const ok = typeof pasteResult === "boolean" ? pasteResult : !!pasteResult?.ok;
+      if (ok) {
+        this.updateStatus("Done", "green");
+        this.stateMachine.transition(STATES.IDLE, "Done");
+        this.updateRecoveryActions(null);
+        if (this.scheduleHideWindow) {
+          this.scheduleHideWindow(this.doneHideWindowMs).catch((error) => {
+            console.warn("Failed to schedule window hide:", error);
+          });
+        }
+        return true;
+      }
+      this.updateStatus("Paste still failed", "red");
+      return false;
+    } catch (error) {
+      this.updateStatus("Paste still failed", "red");
+      return false;
+    }
+  }
+
   async _processTranscriptForPaste(transcript) {
     this.updatePreview(transcript, {
       mode: this.mode,
@@ -548,6 +666,7 @@ export class RecorderController {
       }
     }
 
+    this.lastOutputText = textToPaste;
     if (this.hideWindow) {
       try {
         await this.hideWindow();
@@ -561,10 +680,35 @@ export class RecorderController {
     if (ok) {
       this.updateStatus("Done", "green");
       this.stateMachine.transition(STATES.IDLE, "Done");
+      this.updateRecoveryActions(null);
     } else {
+      const error = pasteResult?.error || "Paste failed";
+      if (this.copyText) {
+        await this.copyText(textToPaste).catch(() => {});
+      }
       if (pasteResult?.error === "accessibility-not-trusted") {
         this.updateStatus("Enable Accessibility permission for Whisper Desktop", "red");
+      } else {
+        this.updateStatus("Paste failed; text copied", "red");
       }
+      this.updatePreview("Paste failed. The generated text is still available below.", {
+        mode: this.mode,
+        phase: "error",
+        selectedText: this.selectedText,
+        selection: this.selection,
+      });
+      this.updateRecoveryActions({
+        show: true,
+        retryPaste: true,
+        copyOutput: true,
+        settings: true,
+      });
+      this.onDiagnostics({
+        type: "paste-failed",
+        mode: this.mode,
+        chars: textToPaste.length,
+        error,
+      });
       this.stateMachine.transition(STATES.ERROR, "Failed to insert text");
     }
 

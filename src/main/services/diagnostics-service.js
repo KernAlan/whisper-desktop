@@ -60,9 +60,40 @@ class DiagnosticsService {
       return;
     }
     if (type === "mic-refresh") {
+      const error = payload.error
+        ? ` error="${payload.error.name || "Error"}: ${payload.error.message || "unknown"}"`
+        : "";
       this.logger.log(
-        `[AUDIO] refresh=${payload.status || "unknown"} selected="${payload.label || "unknown"}"`
+        `[AUDIO] refresh=${payload.status || "unknown"} selected="${payload.label || "unknown"}"${error}`
       );
+      return;
+    }
+    if (type === "mic-stream-error" || type === "mic-init-error") {
+      const error = payload.error || {};
+      const suffix = error.constraint ? ` constraint=${error.constraint}` : "";
+      this.logger.warn(
+        `[AUDIO] ${type} stage=${payload.stage || "startup"} device="${payload.label || payload.deviceId || "unknown"}" error="${error.name || "Error"}: ${error.message || "unknown"}"${suffix}`
+      );
+      return;
+    }
+    if (type === "paste-failed") {
+      this.logger.warn(
+        `[PASTE] failed mode=${payload.mode || "unknown"} chars=${payload.chars || 0} error="${payload.error || "unknown"}"`
+      );
+      return;
+    }
+    if (type === "recovery-saved") {
+      this.logger.warn(
+        `[Recovery] saved target=${payload.target || "unknown"} files=${payload.count || 0} partialChars=${payload.partialChars || 0}`
+      );
+      return;
+    }
+    if (type === "api-key-missing") {
+      this.logger.warn("[Config] GROQ_API_KEY is missing; transcription is blocked.");
+      return;
+    }
+    if (type === "preview-degraded") {
+      this.logger.warn(`[Preview] degraded error="${payload.error || "unknown"}"`);
       return;
     }
     if (type === "audio-devices") {

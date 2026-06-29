@@ -1,3 +1,5 @@
+import { formatError, microphoneStatusForError } from "./core/error-utils.js";
+
 const fields = [
   "shortcut",
   "commandShortcut",
@@ -229,7 +231,7 @@ async function testMic() {
     await audioContext.close();
     setStatus(detected ? "Mic working" : "No audio detected", detected ? "ok" : "error");
   } catch (error) {
-    setStatus(error.message || "Mic test failed", "error");
+    setStatus(`${microphoneStatusForError(error)}: ${formatError(error)}`, "error");
   }
 }
 

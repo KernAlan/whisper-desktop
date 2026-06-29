@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   deleteRecovery: (target) => ipcRenderer.invoke("delete-recovery", target),
   copyText: (text) => ipcRenderer.invoke("copy-text", text),
   hideWindow: () => ipcRenderer.invoke("hide-window"),
+  showWindow: () => ipcRenderer.invoke("show-window"),
+  openSettings: () => ipcRenderer.invoke("open-settings"),
   scheduleHideWindow: (delayMs) => ipcRenderer.invoke("schedule-hide-window", delayMs),
   cancelHideWindow: () => ipcRenderer.invoke("cancel-hide-window"),
   simulateTyping: (text) => ipcRenderer.invoke("simulate-typing", text),

@@ -1,3 +1,27 @@
+import { formatError, serializeError } from "./error-utils.js";
+
+function isPermissionError(error) {
+  return (
+    error?.name === "NotAllowedError" ||
+    error?.name === "SecurityError" ||
+    error?.name === "PermissionDeniedError"
+  );
+}
+
+function createAudioConstraints(deviceId) {
+  const audioOptions = {
+    noiseSuppression: true,
+    echoCancellation: true,
+    autoGainControl: true,
+  };
+
+  if (deviceId && deviceId !== "default") {
+    audioOptions.deviceId = { exact: deviceId };
+  }
+
+  return { audio: audioOptions };
+}
+
 export class AudioEngine {
   constructor({ chooseDevice, setPreferredDeviceId, onDiagnostics }) {
     this.chooseDevice = chooseDevice;
@@ -19,29 +43,37 @@ export class AudioEngine {
 
     const selectedDevice = await this.chooseDevice();
     const deviceId = selectedDevice?.deviceId;
-    const constraints = {
-      audio: deviceId
-        ? {
-            deviceId: { exact: deviceId },
-            noiseSuppression: true,
-            echoCancellation: true,
-            autoGainControl: true,
-          }
-        : {
-            noiseSuppression: true,
-            echoCancellation: true,
-            autoGainControl: true,
-          },
-    };
+    const constraints = createAudioConstraints(deviceId);
 
     if (this.activeStream) {
       this.activeStream.getTracks().forEach((track) => track.stop());
     }
 
-    this.activeStream = await navigator.mediaDevices.getUserMedia(constraints);
+    let usedFallbackDevice = false;
+    try {
+      this.activeStream = await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (error) {
+      this.onDiagnostics({
+        type: "mic-stream-error",
+        stage: deviceId ? "selected-device" : "default-device",
+        label: selectedDevice?.label || "default input",
+        deviceId: deviceId || "default",
+        error: serializeError(error),
+      });
+
+      if (!deviceId || isPermissionError(error)) {
+        throw error;
+      }
+
+      console.warn(`Selected microphone failed; retrying default input. ${formatError(error)}`);
+      usedFallbackDevice = true;
+      this.activeStream = await navigator.mediaDevices.getUserMedia(createAudioConstraints(null));
+    }
+
+    const activeTrack = this.activeStream.getAudioTracks()[0];
     this.activeDevice = {
-      id: selectedDevice?.deviceId || "default",
-      label: selectedDevice?.label || "default input",
+      id: usedFallbackDevice ? "default" : selectedDevice?.deviceId || "default",
+      label: activeTrack?.label || (usedFallbackDevice ? "default input" : selectedDevice?.label) || "default input",
     };
     this.setPreferredDeviceId(this.activeDevice.id);
     this.onDiagnostics({

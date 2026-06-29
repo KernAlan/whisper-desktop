@@ -96,6 +96,7 @@
             }
             #recoveryActions {
                 display: none;
+                flex-wrap: wrap;
                 gap: 8px;
                 margin-top: 10px;
                 -webkit-app-region: no-drag;
@@ -113,6 +114,12 @@
                 padding: 0 10px;
             }
             #retryRecovery {
+                background: var(--working);
+                border-color: var(--working);
+                color: white;
+            }
+            #retryMic,
+            #retryPaste {
                 background: var(--working);
                 border-color: var(--working);
                 color: white;
@@ -146,7 +153,12 @@
         <div id="recoveryActions">
             <button id="retryRecovery" type="button">Retry Saved Audio</button>
             <button id="copyPartial" type="button">Copy Partial Text</button>
+            <button id="retryMic" type="button">Retry Mic</button>
+            <button id="testMic" type="button">Test Mic</button>
+            <button id="retryPaste" type="button">Retry Paste</button>
+            <button id="copyOutput" type="button">Copy Text</button>
             <button id="copyRecoveryCommand" type="button">Copy Retry Command</button>
+            <button id="openSettings" type="button">Settings</button>
         </div>
     </div>
     <div id="runtimeInfo">Loading runtime config...</div>

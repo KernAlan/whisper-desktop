@@ -99,6 +99,7 @@ class TypingService {
       this.logger.error("Error simulating typing:", error);
       return {
         ok: false,
+        error: error?.message || "Paste failed",
         pasteMs,
         restoreMs,
         restoreMode: this.restoreMode,

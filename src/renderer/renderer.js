@@ -5,6 +5,12 @@ import {
 } from "./core/device-manager.js";
 import { AudioEngine } from "./core/audio-engine.js";
 import { RecorderController, STATES } from "./core/recorder-controller.js";
+import {
+  formatError,
+  microphoneStatusForError,
+  serializeError,
+  userMessageForFailure,
+} from "./core/error-utils.js";
 
 const MIN_RECORDING_DURATION_MS = 100;
 let controller;
@@ -130,12 +136,24 @@ function updateRecoveryActions(payload = null) {
   const root = document.getElementById("recoveryActions");
   const copyPartial = document.getElementById("copyPartial");
   const copyCommand = document.getElementById("copyRecoveryCommand");
-  if (!root || !copyPartial || !copyCommand) return;
+  const retryRecovery = document.getElementById("retryRecovery");
+  const retryMic = document.getElementById("retryMic");
+  const testMic = document.getElementById("testMic");
+  const retryPaste = document.getElementById("retryPaste");
+  const copyOutput = document.getElementById("copyOutput");
+  const openSettings = document.getElementById("openSettings");
+  if (!root || !copyPartial || !copyCommand || !retryRecovery) return;
 
   const shouldShow = Boolean(payload?.show);
   root.style.display = shouldShow ? "flex" : "none";
-  copyPartial.style.display = payload?.partialText ? "inline-block" : "none";
-  copyCommand.style.display = payload?.command ? "inline-block" : "none";
+  retryRecovery.style.display = payload?.savedAudio || payload?.target ? "inline-block" : "none";
+  copyPartial.style.display = payload?.copyPartial || payload?.partialText ? "inline-block" : "none";
+  copyCommand.style.display = payload?.copyCommand || payload?.command ? "inline-block" : "none";
+  if (retryMic) retryMic.style.display = payload?.retryMic ? "inline-block" : "none";
+  if (testMic) testMic.style.display = payload?.testMic ? "inline-block" : "none";
+  if (retryPaste) retryPaste.style.display = payload?.retryPaste ? "inline-block" : "none";
+  if (copyOutput) copyOutput.style.display = payload?.copyOutput ? "inline-block" : "none";
+  if (openSettings) openSettings.style.display = payload?.settings ? "inline-block" : "none";
 }
 
 async function refreshMicSelection() {
@@ -145,6 +163,7 @@ async function refreshMicSelection() {
     await controller.audioEngine.ensureStream({ forceRefresh: true });
     const device = controller.audioEngine.getActiveDevice();
     updateStatus(`Mic updated (${device.label})`, "black");
+    updateRecoveryActions(null);
     sendDiagnostics({
       type: "mic-refresh",
       status: "ok",
@@ -153,10 +172,17 @@ async function refreshMicSelection() {
     });
     return { ok: true, label: device.label, deviceId: device.id };
   } catch (error) {
-    console.error("Mic refresh failed:", error);
-    updateStatus("Mic update failed", "red");
-    sendDiagnostics({ type: "mic-refresh", status: "error" });
-    return { ok: false, error: error.message };
+    const errorText = formatError(error);
+    console.error(`Mic refresh failed: ${errorText}`);
+    updateStatus(microphoneStatusForError(error), "red");
+    updateRecoveryActions({
+      show: true,
+      retryMic: true,
+      testMic: true,
+      settings: true,
+    });
+    sendDiagnostics({ type: "mic-refresh", status: "error", error: serializeError(error) });
+    return { ok: false, error: errorText };
   }
 }
 
@@ -183,14 +209,28 @@ async function testMicrophone() {
 
     if (detected) {
       updateStatus("Microphone is working", "green");
+      updateRecoveryActions(null);
       return { detected: true };
     }
     updateStatus("No audio detected", "red");
+    updateRecoveryActions({
+      show: true,
+      retryMic: true,
+      testMic: true,
+      settings: true,
+    });
     return { detected: false };
   } catch (error) {
-    console.error("Error testing microphone:", error);
-    updateStatus("Mic test failed", "red");
-    return { detected: false, error: error.message };
+    const errorText = formatError(error);
+    console.error(`Error testing microphone: ${errorText}`);
+    updateStatus(microphoneStatusForError(error), "red");
+    updateRecoveryActions({
+      show: true,
+      retryMic: true,
+      testMic: true,
+      settings: true,
+    });
+    return { detected: false, error: errorText };
   }
 }
 
@@ -198,7 +238,6 @@ async function boot() {
   const runtimeConfig = await window.electronAPI.getRuntimeConfig();
   const isMac = navigator.platform.toLowerCase().includes("mac");
   applyRuntimeConfig(runtimeConfig);
-
   const audioEngine = new AudioEngine({
     chooseDevice: chooseBestAudioInputDevice,
     setPreferredDeviceId,
@@ -234,9 +273,24 @@ async function boot() {
 
   try {
     await controller.initialize();
+    if (runtimeConfig.apiKeyOk === false) {
+      updateStatus("API key missing", "red");
+      updatePreview("Set GROQ_API_KEY before recording.", { phase: "error" });
+      updateRecoveryActions({ show: true, settings: true });
+      sendDiagnostics({ type: "api-key-missing" });
+    }
   } catch (error) {
-    console.error("Failed to initialize recorder:", error);
-    updateStatus("Initialization failed", "red");
+    const errorText = formatError(error);
+    console.error(`Failed to initialize recorder: ${errorText}`);
+    sendDiagnostics({ type: "mic-init-error", error: serializeError(error) });
+    updateStatus(microphoneStatusForError(error), "red");
+    updatePreview(userMessageForFailure(error, "Microphone is not ready."), { phase: "error" });
+    updateRecoveryActions({
+      show: true,
+      retryMic: true,
+      testMic: true,
+      settings: true,
+    });
   }
 
   const audioDevices = await listAudioDevices().catch(() => []);
@@ -253,6 +307,19 @@ async function boot() {
 
   window.electronAPI.onToggleRecording((payload = {}) => {
     updateRecoveryActions(null);
+    if (runtimeConfig?.apiKeyOk === false) {
+      updateStatus("API key missing", "red");
+      updatePreview("Set GROQ_API_KEY before recording.", {
+        mode: payload.mode || "dictation",
+        phase: "error",
+        selectedText: payload.selectedText || "",
+        selection: payload.selection,
+      });
+      updateRecoveryActions({ show: true, settings: true });
+      sendDiagnostics({ type: "api-key-missing" });
+      window.electronAPI.showWindow?.();
+      return;
+    }
     controller.toggleRecording(payload).catch((error) => {
       console.error("Toggle failed:", error);
       updateStatus("Toggle failed", "red");
@@ -276,6 +343,32 @@ async function boot() {
   document.getElementById("copyRecoveryCommand")?.addEventListener("click", () => {
     controller.copyRecoveryCommand().catch((error) => {
       console.error("Copy command failed:", error);
+      updateStatus("Copy failed", "red");
+    });
+  });
+
+  document.getElementById("retryMic")?.addEventListener("click", () => {
+    refreshMicSelection();
+  });
+
+  document.getElementById("testMic")?.addEventListener("click", () => {
+    testMicrophone();
+  });
+
+  document.getElementById("openSettings")?.addEventListener("click", () => {
+    window.electronAPI.openSettings?.();
+  });
+
+  document.getElementById("retryPaste")?.addEventListener("click", () => {
+    controller.retryLastPaste().catch((error) => {
+      console.error(`Retry paste failed: ${formatError(error)}`);
+      updateStatus("Retry paste failed", "red");
+    });
+  });
+
+  document.getElementById("copyOutput")?.addEventListener("click", () => {
+    controller.copyLastOutput().catch((error) => {
+      console.error(`Copy text failed: ${formatError(error)}`);
       updateStatus("Copy failed", "red");
     });
   });

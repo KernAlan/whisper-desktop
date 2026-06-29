@@ -140,6 +140,15 @@ class TranscriptionService {
     }
   }
 
+  async saveAudioBufferToRecovery(arrayBuffer) {
+    const tempFilePath = path.join(
+      os.tmpdir(),
+      `recovery_audio_${Date.now()}_${Math.random().toString(36).slice(2)}.webm`
+    );
+    await fs.writeFile(tempFilePath, Buffer.from(arrayBuffer));
+    return this._saveToRecovery(tempFilePath);
+  }
+
   _warnPreviewFailure(error) {
     const message = error?.message || "Preview transcription failed";
     const now = Date.now();

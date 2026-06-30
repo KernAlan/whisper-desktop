@@ -56,7 +56,7 @@ function applyRuntimeSettings(current, payload = {}) {
   if (shortcut) next.shortcut = shortcut;
 
   const commandShortcut = cleanString(payload.commandShortcut);
-  if (commandShortcut) next.commandShortcut = commandShortcut;
+  if (commandShortcut || payload.commandShortcut === "") next.commandShortcut = commandShortcut || "off";
 
   const model = cleanString(payload.model);
   if (model) next.model = model;

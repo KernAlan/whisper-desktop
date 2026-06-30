@@ -35,12 +35,13 @@ class TypingService {
     }
   }
 
-  async pasteText(text, { onProgress } = {}) {
+  async pasteText(text, { onProgress, keepTextOnClipboard = true } = {}) {
     let clipboardSnapshot = null;
+    const finalText = String(text || "");
     const startedAt = Date.now();
     let pasteMs = 0;
     let restoreMs = 0;
-    const chunks = this._splitTextForPaste(String(text || ""), this.pasteChunkChars);
+    const chunks = this._splitTextForPaste(finalText, this.pasteChunkChars);
 
     const restoreClipboard = async () => {
       if (!clipboardSnapshot || this.restoreMode === "off") {
@@ -62,7 +63,7 @@ class TypingService {
     };
 
     try {
-      if (this.restoreMode !== "off") {
+      if (this.restoreMode !== "off" && !keepTextOnClipboard) {
         clipboardSnapshot = this._captureClipboardSnapshot();
       }
 
@@ -78,7 +79,9 @@ class TypingService {
       }
       pasteMs = Date.now() - startedAt;
 
-      if (this.restoreMode === "blocking") {
+      if (keepTextOnClipboard) {
+        clipboard.writeText(finalText);
+      } else if (this.restoreMode === "blocking") {
         await restoreClipboard();
       } else if (this.restoreMode === "deferred") {
         setTimeout(() => {
@@ -96,6 +99,13 @@ class TypingService {
         chunks: chunks.length,
       };
     } catch (error) {
+      if (keepTextOnClipboard) {
+        try {
+          clipboard.writeText(finalText);
+        } catch (clipboardError) {
+          this.logger.warn("Failed to keep text on clipboard after paste error:", clipboardError);
+        }
+      }
       this.logger.error("Error simulating typing:", error);
       return {
         ok: false,

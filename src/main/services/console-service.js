@@ -1,4 +1,5 @@
 const net = require("net");
+const { clipboard } = require("electron");
 
 class ConsoleService {
   constructor({
@@ -10,6 +11,7 @@ class ConsoleService {
     mainWindow,
     app,
     transcriptionService,
+    transcriptStore,
     dictionaryService,
     openSettings,
     resetSettings,
@@ -22,6 +24,7 @@ class ConsoleService {
     this.mainWindow = mainWindow;
     this.app = app;
     this.transcriptionService = transcriptionService;
+    this.transcriptStore = transcriptStore || null;
     this.dictionaryService = dictionaryService;
     this.openSettings = typeof openSettings === "function" ? openSettings : null;
     this.resetSettings = typeof resetSettings === "function" ? resetSettings : null;
@@ -132,6 +135,9 @@ class ConsoleService {
     if (cmd === "refresh" && parts[1]?.toLowerCase() === "mic") return this._cmdRefreshMic();
     if (cmd === "test" && parts[1]?.toLowerCase() === "mic") return this._cmdTestMic();
     if (cmd === "last") return this._cmdLast(parts.slice(1));
+    if (cmd === "copy-last" || (cmd === "copy" && parts[1]?.toLowerCase() === "last")) {
+      return this._cmdCopyLast();
+    }
     if (cmd === "last-command") return this._cmdLastCommand();
     if (cmd === "history") return this._cmdHistory();
     if (cmd === "recovery") return this._cmdRecovery();
@@ -164,6 +170,7 @@ class ConsoleService {
       kv("settings", "Open settings window"),
       kv("reset settings", "Reset saved settings to .env/defaults"),
       kv("last [n]", "Show last N transcriptions (default 1)"),
+      kv("copy-last", "Copy latest saved transcript to clipboard"),
       kv("last-command", "Show last command-mode run"),
       kv("history", "List recent transcriptions"),
       kv("dict", "List dictionary terms"),
@@ -379,8 +386,7 @@ class ConsoleService {
     const n = Math.max(1, Math.min(50, Number(args[0]) || 1));
     const entries = this.diagnostics.getTranscriptHistory(n);
     if (!entries.length) {
-      this._sendLine("  No transcriptions yet.");
-      return;
+      return this._cmdLastFromStore(n);
     }
     this._sendLine("");
     for (const entry of entries) {
@@ -438,6 +444,40 @@ class ConsoleService {
     this._sendLine("");
     this._sendLine('  Use "retry latest", "retry <filename>", or "retry <session-id>".');
     this._sendLine("");
+  }
+
+  async _cmdLastFromStore(n) {
+    if (!this.transcriptStore) {
+      this._sendLine("  No transcriptions yet.");
+      return;
+    }
+    const entries = await this.transcriptStore.list(n);
+    if (!entries.length) {
+      this._sendLine("  No transcriptions yet.");
+      return;
+    }
+    this._sendLine("");
+    for (const entry of entries) {
+      const text = require("fs").readFileSync(entry.path, "utf8");
+      const date = entry.modified.toLocaleTimeString();
+      this._sendLine(`  [${date}] (${text.length} chars, saved)`);
+      this._sendLine(`  ${text}`);
+      this._sendLine("");
+    }
+  }
+
+  async _cmdCopyLast() {
+    if (!this.transcriptStore) {
+      this._sendLine("  No transcript store available.");
+      return;
+    }
+    const entry = await this.transcriptStore.latest();
+    if (!entry?.text?.trim()) {
+      this._sendLine("  No saved transcripts found.");
+      return;
+    }
+    clipboard.writeText(entry.text);
+    this._sendLine(`  Copied latest transcript (${entry.text.length} chars).`);
   }
 
   _groupRecoveryFiles(files) {

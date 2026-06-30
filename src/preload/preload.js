@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   retryRecovery: (target, options = {}) => ipcRenderer.invoke("retry-recovery", { target, ...options }),
   deleteRecovery: (target) => ipcRenderer.invoke("delete-recovery", target),
   copyText: (text) => ipcRenderer.invoke("copy-text", text),
+  listTranscripts: (limit) => ipcRenderer.invoke("list-transcripts", limit),
+  copyLatestTranscript: () => ipcRenderer.invoke("copy-latest-transcript"),
   hideWindow: () => ipcRenderer.invoke("hide-window"),
   showWindow: () => ipcRenderer.invoke("show-window"),
   openSettings: () => ipcRenderer.invoke("open-settings"),
@@ -26,6 +28,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
   resetRuntimeSettings: () => ipcRenderer.invoke("reset-runtime-settings"),
   onRuntimeConfigUpdated: (callback) => {
     ipcRenderer.on("runtime-config-updated", (_event, payload) => callback(payload));
+  },
+  onAppResume: (callback) => {
+    ipcRenderer.on("app-resume", (_event, payload) => callback(payload));
   },
   listDictionary: () => ipcRenderer.invoke("dictionary-list"),
   addDictionaryTerm: (term) => ipcRenderer.invoke("dictionary-add", term),

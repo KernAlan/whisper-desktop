@@ -4,6 +4,7 @@ const {
   clipboard,
   ipcMain,
   globalShortcut,
+  powerMonitor,
   systemPreferences,
 } = require("electron");
 const path = require("path");
@@ -12,6 +13,7 @@ const { WindowManager } = require("./ui/window-manager");
 const { TranscriptionService } = require("./services/transcription-service");
 const { TypingService } = require("./services/typing-service");
 const { DiagnosticsService } = require("./services/diagnostics-service");
+const { TranscriptStore } = require("./services/transcript-store");
 const { Logger } = require("./services/logger");
 const { ConsoleService } = require("./services/console-service");
 const { DictionaryService } = require("./services/dictionary-service");
@@ -26,6 +28,7 @@ require("dotenv").config();
 
 const config = loadConfig();
 const recoveryDir = path.join(app.getPath("userData"), "recovery");
+const transcriptDir = path.join(app.getPath("userData"), "transcripts");
 const dictionaryPath = path.join(app.getPath("userData"), "dictionary.json");
 const configIssues = validateConfig(config);
 const logger = new Logger({
@@ -48,7 +51,10 @@ const shortcutRegistration = {
   registeredShortcut: "",
   registeredCommandShortcut: "",
 };
-const diagnostics = new DiagnosticsService(config, logger);
+const HOTKEY_DOUBLE_TAP_MS = 450;
+let lastDictationHotkeyAt = 0;
+const transcriptStore = new TranscriptStore({ dir: transcriptDir, logger });
+const diagnostics = new DiagnosticsService(config, logger, { transcriptStore });
 const windowManager = new WindowManager({ hideWindowMs: config.app.hideWindowMs });
 const dictionaryService = new DictionaryService({ filePath: dictionaryPath, logger });
 const transcriptionService = new TranscriptionService({
@@ -79,6 +85,10 @@ const textProcessingService = new TextProcessingService({
   logger,
 });
 
+function isShortcutDisabled(shortcut) {
+  return !shortcut || String(shortcut).trim().toLowerCase() === "off";
+}
+
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
   // New instance couldn't get the lock — the old instance will receive
@@ -96,18 +106,23 @@ if (!hasSingleInstanceLock) {
 
 function setupShortcut() {
   globalShortcut.unregisterAll();
+  lastDictationHotkeyAt = 0;
   shortcutRegistration.shortcutOk = false;
   shortcutRegistration.commandShortcutOk = false;
   shortcutRegistration.registeredShortcut = "";
   shortcutRegistration.registeredCommandShortcut = "";
 
   const dictationHandler = () => {
+    const now = Date.now();
+    const showRecovery = now - lastDictationHotkeyAt <= HOTKEY_DOUBLE_TAP_MS;
+    lastDictationHotkeyAt = now;
     windowManager.showWindow({ autoHide: false });
     const windows = BrowserWindow.getAllWindows();
     windows.forEach((window) =>
       window.webContents.send("toggle-recording", {
         mode: "dictation",
         dictationMode: runtimeSettings.dictationMode,
+        showRecovery,
       })
     );
   };
@@ -120,43 +135,62 @@ function setupShortcut() {
     logger.error(`Failed to register global shortcut: ${runtimeSettings.shortcut}`);
   }
 
-  const commandHandler = async () => {
-    const selection = await typingService.captureSelectedText();
-    windowManager.showWindow({ autoHide: false });
-    const windows = BrowserWindow.getAllWindows();
-    windows.forEach((window) =>
-      window.webContents.send("toggle-recording", {
-        mode: "command",
-        selectedText: selection.text,
-        selection,
-      })
-    );
-  };
+  if (isShortcutDisabled(runtimeSettings.commandShortcut)) {
+    shortcutRegistration.commandShortcutOk = true;
+  } else {
+    const commandHandler = async () => {
+      const selection = await typingService.captureSelectedText();
+      windowManager.showWindow({ autoHide: false });
+      const windows = BrowserWindow.getAllWindows();
+      windows.forEach((window) =>
+        window.webContents.send("toggle-recording", {
+          mode: "command",
+          selectedText: selection.text,
+          selection,
+        })
+      );
+    };
 
-  const commandCandidates = [
-    runtimeSettings.commandShortcut,
-    ...COMMAND_SHORTCUT_FALLBACKS,
-  ].filter((value, index, all) => value && all.indexOf(value) === index);
-  for (const shortcut of commandCandidates) {
-    if (globalShortcut.register(shortcut, commandHandler)) {
-      shortcutRegistration.commandShortcutOk = true;
-      shortcutRegistration.registeredCommandShortcut = shortcut;
-      if (shortcut !== runtimeSettings.commandShortcut) {
-        logger.warn(
-          `Command shortcut unavailable: ${runtimeSettings.commandShortcut}. Using ${shortcut} for this session.`
-        );
+    const commandCandidates = [
+      runtimeSettings.commandShortcut,
+      ...COMMAND_SHORTCUT_FALLBACKS,
+    ].filter((value, index, all) => value && all.indexOf(value) === index);
+    for (const shortcut of commandCandidates) {
+      if (globalShortcut.register(shortcut, commandHandler)) {
+        shortcutRegistration.commandShortcutOk = true;
+        shortcutRegistration.registeredCommandShortcut = shortcut;
+        if (shortcut !== runtimeSettings.commandShortcut) {
+          logger.warn(
+            `Command shortcut unavailable: ${runtimeSettings.commandShortcut}. Using ${shortcut} for this session.`
+          );
+        }
+        break;
       }
-      break;
+    }
+
+    if (!shortcutRegistration.commandShortcutOk) {
+      logger.error(
+        `Failed to register command shortcut: ${runtimeSettings.commandShortcut}. Tried: ${commandCandidates.join(", ")}`
+      );
     }
   }
 
-  if (!shortcutRegistration.commandShortcutOk) {
-    logger.error(
-      `Failed to register command shortcut: ${runtimeSettings.commandShortcut}. Tried: ${commandCandidates.join(", ")}`
-    );
-  }
-
   return { ...shortcutRegistration };
+}
+
+function recoverAfterResume(reason = "resume") {
+  logger.log(`[Power] ${reason}; refreshing shortcuts and overlay state.`);
+  try {
+    setupShortcut();
+    windowManager.recoverWindowState();
+    broadcastRuntimeConfig();
+    const window = windowManager.getWindow();
+    if (window && !window.isDestroyed()) {
+      window.webContents.send("app-resume", { reason });
+    }
+  } catch (error) {
+    logger.error(`[Power] resume recovery failed: ${error?.message || error}`);
+  }
 }
 
 function syncRuntimeServices() {
@@ -210,6 +244,7 @@ const consoleService = new ConsoleService({
   mainWindow: null,
   app,
   transcriptionService,
+  transcriptStore,
   dictionaryService,
   openSettings: () => windowManager.showSettingsWindow(),
 });
@@ -324,6 +359,12 @@ app.on("ready", async () => {
   await dictionaryService.load();
   createAndWireMainWindow();
   consoleService.start();
+  powerMonitor.on("resume", () => {
+    setTimeout(() => recoverAfterResume("resume"), 1000);
+  });
+  powerMonitor.on("unlock-screen", () => {
+    setTimeout(() => recoverAfterResume("unlock-screen"), 500);
+  });
 });
 
 app.on("will-quit", () => {
@@ -400,6 +441,26 @@ ipcMain.handle("delete-recovery", async (_event, target) => {
 ipcMain.handle("copy-text", async (_event, text) => {
   clipboard.writeText(String(text || ""));
   return true;
+});
+
+ipcMain.handle("list-transcripts", async (_event, limit) => {
+  const entries = await transcriptStore.list(Number(limit) || 5);
+  return Promise.all(entries.map(async (entry) => {
+    const text = require("fs").readFileSync(entry.path, "utf8");
+    return {
+      name: entry.name,
+      text,
+      chars: text.length,
+      modified: entry.modified,
+    };
+  }));
+});
+
+ipcMain.handle("copy-latest-transcript", async () => {
+  const entry = await transcriptStore.latest();
+  if (!entry?.text?.trim()) return { ok: false, error: "No saved transcripts" };
+  clipboard.writeText(entry.text);
+  return { ok: true, chars: entry.text.length };
 });
 
 ipcMain.handle("simulate-typing", async (event, text) => {

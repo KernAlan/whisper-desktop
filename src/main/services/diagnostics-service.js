@@ -1,5 +1,5 @@
 class DiagnosticsService {
-  constructor(config, logger) {
+  constructor(config, logger, { transcriptStore } = {}) {
     this.config = config;
     this.logger = logger || console;
     this.printed = false;
@@ -15,6 +15,7 @@ class DiagnosticsService {
     this.transcriptHistory = [];
     this.lastCommand = null;
     this._transcriptListener = null;
+    this.transcriptStore = transcriptStore || null;
   }
 
   printStartup({ logFilePath = "", appVersion = "" } = {}) {
@@ -125,6 +126,7 @@ class DiagnosticsService {
           durationMs: payload.transcribeMs || 0,
           bytes: payload.bytes || 0,
           pasteOk: payload.pasteOk,
+          mode: payload.commandInstruction ? "command" : "dictation",
         };
         this.transcriptHistory.push(entry);
         if (this.transcriptHistory.length > 50) {
@@ -137,6 +139,11 @@ class DiagnosticsService {
         this.logger.log(`[${label}] (${transcriptText.length} chars) ${preview}`);
         if (this._transcriptListener) {
           try { this._transcriptListener(entry); } catch (_) { /* ignore */ }
+        }
+        if (this.transcriptStore) {
+          this.transcriptStore.save(entry).catch((error) => {
+            this.logger.warn(`[TranscriptStore] Failed to save transcript: ${error.message}`);
+          });
         }
       }
 

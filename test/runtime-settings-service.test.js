@@ -47,6 +47,14 @@ test("applyRuntimeSettings accepts valid settings and ignores invalid values", (
   assert.equal(next.shortcut, "Ctrl+Alt+Space");
 });
 
+test("applyRuntimeSettings can disable command shortcut", () => {
+  const next = applyRuntimeSettings(defaults(), {
+    commandShortcut: " off ",
+  });
+
+  assert.equal(next.commandShortcut, "off");
+});
+
 test("RuntimeSettingsService saves and loads mutable settings", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "whisper-settings-"));
   const filePath = path.join(dir, "settings.json");

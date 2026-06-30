@@ -12,6 +12,7 @@ export class RecorderController {
     mediaRecorderTimesliceMs,
     doneHideWindowMs = 900,
     hideWindow,
+    dismissWindow,
     scheduleHideWindow,
     cancelHideWindow,
     focusRestoreDelayMs = 120,
@@ -21,6 +22,7 @@ export class RecorderController {
     transcribePreview,
     retryRecovery,
     deleteRecovery,
+    listTranscripts,
     polishDictation,
     processCommand,
     simulateTyping,
@@ -35,6 +37,7 @@ export class RecorderController {
     this.mediaRecorderTimesliceMs = mediaRecorderTimesliceMs;
     this.doneHideWindowMs = doneHideWindowMs;
     this.hideWindow = typeof hideWindow === "function" ? hideWindow : null;
+    this.dismissWindow = typeof dismissWindow === "function" ? dismissWindow : null;
     this.scheduleHideWindow = typeof scheduleHideWindow === "function" ? scheduleHideWindow : null;
     this.cancelHideWindow = typeof cancelHideWindow === "function" ? cancelHideWindow : null;
     this.focusRestoreDelayMs = focusRestoreDelayMs;
@@ -44,6 +47,7 @@ export class RecorderController {
     this.transcribePreview = transcribePreview;
     this.retryRecovery = typeof retryRecovery === "function" ? retryRecovery : null;
     this.deleteRecovery = typeof deleteRecovery === "function" ? deleteRecovery : null;
+    this.listTranscripts = typeof listTranscripts === "function" ? listTranscripts : null;
     this.polishDictation = polishDictation;
     this.processCommand = processCommand;
     this.simulateTyping = simulateTyping;
@@ -114,6 +118,10 @@ export class RecorderController {
   }
 
   async toggleRecording(options = {}) {
+    if (options?.showRecovery) {
+      return this.showRecoveryConsole();
+    }
+
     const state = this.getState();
     if (state === STATES.RECORDING) {
       return this.stopRecording();
@@ -186,6 +194,7 @@ export class RecorderController {
         retryMic: true,
         testMic: true,
         settings: true,
+        dismiss: true,
       });
       this.stateMachine.transition(STATES.ERROR, status);
     }
@@ -354,6 +363,7 @@ export class RecorderController {
           show: true,
           retryMic: true,
           testMic: true,
+          dismiss: true,
         });
         this.stateMachine.transition(STATES.IDLE, "No audio");
         return;
@@ -387,17 +397,35 @@ export class RecorderController {
 
       if (!transcript || typeof transcript !== "string" || !transcript.trim()) {
         keepWindowVisible = true;
+        const draftText = this._bestDraftText();
+        this.lastRecovery = draftText
+          ? {
+              show: true,
+              partialText: draftText,
+              copyPartial: true,
+              pastePartial: true,
+              dismiss: true,
+            }
+          : null;
         this.updateStatus("No transcription, try again", "red");
-        this.updatePreview("No speech was transcribed. Try again, or test the microphone if this repeats.", {
-          mode: this.mode,
-          phase: "error",
-          selectedText: this.selectedText,
-          selection: this.selection,
-        });
+        this.updatePreview(
+          draftText
+            ? "No final transcription came back. You can copy or paste the draft text below."
+            : "No speech was transcribed. Try again, or test the microphone if this repeats.",
+          {
+            mode: this.mode,
+            phase: "error",
+            selectedText: this.selectedText,
+            selection: this.selection,
+          }
+        );
         this.updateRecoveryActions({
           show: true,
+          copyPartial: Boolean(draftText),
+          pastePartial: Boolean(draftText),
           retryMic: true,
           testMic: true,
+          dismiss: true,
         });
         this.stateMachine.transition(STATES.IDLE, "Empty transcript");
         return;
@@ -419,7 +447,7 @@ export class RecorderController {
       const recoveryFiles = Array.isArray(error?.recoveryFiles) ? error.recoveryFiles : [];
       if (recoveryFiles.length) {
         const target = error.recoveryTarget || this._recoveryTarget(recoveryFiles);
-        const partialText = typeof error.partialText === "string" ? error.partialText.trim() : "";
+        const partialText = this._bestDraftText(error.partialText);
         const count = recoveryFiles.length;
         const label = count === 1 ? "saved audio" : `${count} saved chunks`;
         const command = `node cli.js retry ${target}`;
@@ -431,7 +459,9 @@ export class RecorderController {
           mode: this.mode,
           savedAudio: true,
           copyPartial: Boolean(partialText),
+          pastePartial: Boolean(partialText),
           copyCommand: true,
+          dismiss: true,
         };
         this.onDiagnostics({
           type: "recovery-saved",
@@ -445,7 +475,7 @@ export class RecorderController {
         this.updateStatus(`Recovery saved. Manual retry needed: ${label}`, "red");
         this.updatePreview(
           partialText
-            ? "Automatic retry failed. Partial text was copied. You can retry the saved audio below."
+            ? "Automatic retry failed. Draft text was copied. You can paste it or retry the saved audio below."
             : "Automatic retry failed. You can retry the saved audio below.",
           {
             mode: this.mode,
@@ -459,9 +489,19 @@ export class RecorderController {
         this.stateMachine.transition(STATES.IDLE, "Recovery saved");
       } else {
         keepWindowVisible = true;
+        const draftText = this._bestDraftText(error.partialText);
+        this.lastRecovery = draftText
+          ? {
+              show: true,
+              partialText: draftText,
+              copyPartial: true,
+              pastePartial: true,
+              dismiss: true,
+            }
+          : null;
         const message = userMessageForFailure(error, "Error processing audio");
         this.updateStatus(message, "red");
-        this.updatePreview(message, {
+        this.updatePreview(draftText ? `${message}. Draft text is available below.` : message, {
           mode: this.mode,
           phase: "error",
           selectedText: this.selectedText,
@@ -469,8 +509,11 @@ export class RecorderController {
         });
         this.updateRecoveryActions({
           show: true,
+          copyPartial: Boolean(draftText),
+          pastePartial: Boolean(draftText),
           copyOutput: Boolean(this.lastOutputText),
           settings: true,
+          dismiss: true,
         });
         this.stateMachine.transition(STATES.ERROR, "Error processing audio");
       }
@@ -551,12 +594,52 @@ export class RecorderController {
   async copyRecoveryPartial() {
     const text = this.lastRecovery?.partialText || "";
     if (!text.trim() || !this.copyText) {
-      this.updateStatus("No partial text to copy", "red");
+      this.updateStatus("No draft text to copy", "red");
       return false;
     }
     await this.copyText(text);
-    this.updateStatus("Partial text copied", "green");
+    this.updateStatus("Draft text copied", "green");
     return true;
+  }
+
+  async pasteRecoveryPartial() {
+    const text = this.lastRecovery?.partialText || "";
+    if (!text.trim()) {
+      this.updateStatus("No draft text to paste", "red");
+      return false;
+    }
+
+    this.updateStatus("Pasting draft...", "blue");
+    const pasteResult = await this.simulateTyping(text);
+    const ok = typeof pasteResult === "boolean" ? pasteResult : !!pasteResult?.ok;
+    if (ok) {
+      this.updateStatus("Done", "green");
+      this.stateMachine.transition(STATES.IDLE, "Done");
+      this.updatePreview("Inserted. Backup text is still on the clipboard.", {
+        mode: "dictation",
+        phase: "recovery",
+      });
+      this.updateRecoveryActions({
+        show: true,
+        copyPartial: Boolean(text),
+        pastePartial: Boolean(text),
+        history: true,
+        dismiss: true,
+      });
+      if (this.scheduleHideWindow) {
+        this.scheduleHideWindow(this.doneHideWindowMs).catch((error) => {
+          console.warn("Failed to schedule window hide:", error);
+        });
+      }
+      return true;
+    }
+
+    if (this.copyText) {
+      await this.copyText(text).catch(() => {});
+    }
+    this.updateStatus("Paste failed; draft copied", "red");
+    this.updateRecoveryActions({ ...this.lastRecovery, show: true, dismiss: true });
+    return false;
   }
 
   async copyRecoveryCommand() {
@@ -593,7 +676,13 @@ export class RecorderController {
       if (ok) {
         this.updateStatus("Done", "green");
         this.stateMachine.transition(STATES.IDLE, "Done");
-        this.updateRecoveryActions(null);
+        this.updateRecoveryActions({
+          show: true,
+          retryPaste: true,
+          copyOutput: true,
+          history: true,
+          dismiss: true,
+        });
         if (this.scheduleHideWindow) {
           this.scheduleHideWindow(this.doneHideWindowMs).catch((error) => {
             console.warn("Failed to schedule window hide:", error);
@@ -607,6 +696,88 @@ export class RecorderController {
       this.updateStatus("Paste still failed", "red");
       return false;
     }
+  }
+
+  async dismissWindowNow() {
+    this.stopPreviewLoop();
+    this.stopRecordingStatusLoop();
+    this.stopProcessingStatusLoop();
+    this.updateRecoveryActions(null);
+    if (this.getState() !== STATES.RECORDING) {
+      this.stateMachine.transition(STATES.IDLE, "Dismissed");
+    }
+    if (this.dismissWindow) {
+      await this.dismissWindow();
+    } else if (this.scheduleHideWindow) {
+      await this.scheduleHideWindow(1);
+    }
+    return true;
+  }
+
+  async showRecoveryConsole() {
+    this.stopPreviewLoop();
+    this.stopRecordingStatusLoop();
+    this.stopProcessingStatusLoop();
+    this.stateMachine.transition(STATES.IDLE, "Recovery");
+    this.updateStatus("Recovery", "blue");
+
+    const text = this._bestDraftText();
+    if (text) {
+      this.setRecoveryText(text);
+      return true;
+    }
+
+    const entries = await this.loadTranscriptHistory(5);
+    const latest = entries[0];
+    if (latest?.text) {
+      this.setRecoveryText(latest.text);
+      return true;
+    }
+
+    this.updatePreview("No saved transcripts yet.", {
+      mode: "dictation",
+      phase: "recovery",
+    });
+    this.updateRecoveryActions({
+      show: true,
+      history: true,
+      dismiss: true,
+    });
+    return false;
+  }
+
+  async loadTranscriptHistory(limit = 5) {
+    if (!this.listTranscripts) return [];
+    try {
+      return await this.listTranscripts(limit);
+    } catch (error) {
+      console.warn("Failed to load transcript history:", error);
+      return [];
+    }
+  }
+
+  setRecoveryText(text) {
+    const value = String(text || "").trim();
+    if (!value) {
+      this.updateStatus("No text to recover", "red");
+      return false;
+    }
+    this.lastRecovery = {
+      show: true,
+      partialText: value,
+      copyPartial: true,
+      pastePartial: true,
+      history: true,
+      dismiss: true,
+    };
+    this.lastOutputText = value;
+    this.updatePreview(value, {
+      mode: "dictation",
+      phase: "recovery",
+    });
+    this.updateRecoveryActions(this.lastRecovery);
+    this.updateStatus("Recovered text ready", "green");
+    return true;
   }
 
   async _processTranscriptForPaste(transcript) {
@@ -679,8 +850,20 @@ export class RecorderController {
     const ok = typeof pasteResult === "boolean" ? pasteResult : !!pasteResult?.ok;
     if (ok) {
       this.updateStatus("Done", "green");
+      this.updatePreview("Inserted. Backup text is still on the clipboard.", {
+        mode: this.mode,
+        phase: "recovery",
+        selectedText: this.selectedText,
+        selection: this.selection,
+      });
       this.stateMachine.transition(STATES.IDLE, "Done");
-      this.updateRecoveryActions(null);
+      this.updateRecoveryActions({
+        show: true,
+        retryPaste: true,
+        copyOutput: true,
+        history: true,
+        dismiss: true,
+      });
     } else {
       const error = pasteResult?.error || "Paste failed";
       if (this.copyText) {
@@ -701,7 +884,9 @@ export class RecorderController {
         show: true,
         retryPaste: true,
         copyOutput: true,
+        history: true,
         settings: true,
+        dismiss: true,
       });
       this.onDiagnostics({
         type: "paste-failed",
@@ -783,6 +968,19 @@ export class RecorderController {
     const first = recoveryFiles[0] || {};
     if (first.total > 1 && first.sessionId) return first.sessionId;
     return first.name || "latest";
+  }
+
+  _bestDraftText(primary = "") {
+    const candidates = [
+      primary,
+      this.previewText,
+      this.lastOutputText,
+    ];
+    for (const candidate of candidates) {
+      const text = typeof candidate === "string" ? candidate.trim() : "";
+      if (text) return text;
+    }
+    return "";
   }
 
   async _cleanupRecoveredAudioIfSafe(output, explicitTarget = "") {

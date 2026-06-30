@@ -49,17 +49,22 @@ function renderRuntimeConfig(config) {
   runtimeConfig = config;
   const runtimeInfo = document.getElementById("runtimeInfo");
   const hotkeyHint = document.getElementById("hotkeyHint");
+  const commandShortcutOff = !config.commandShortcut || String(config.commandShortcut).toLowerCase() === "off";
   const dictationShortcut = config.shortcutOk === false
     ? "Dictation shortcut unavailable"
     : `${platformShortcutDisplay(config.registeredShortcut || config.shortcut)} dictates`;
-  const commandShortcut = config.commandShortcutOk === false
+  const commandShortcut = commandShortcutOff
+    ? ""
+    : config.commandShortcutOk === false
     ? "Command shortcut unavailable"
     : `${platformShortcutDisplay(config.registeredCommandShortcut || config.commandShortcut)} edits selection`;
   if (runtimeInfo) {
     runtimeInfo.textContent = `ASR: ${config.model} | Text: ${config.textModel} | Dictation: ${config.dictationMode} | Dictionary: ${(config.dictionaryTerms || []).length}`;
   }
   if (hotkeyHint) {
-    hotkeyHint.textContent = `${dictationShortcut} | ${commandShortcut}`;
+    hotkeyHint.textContent = commandShortcut
+      ? `${dictationShortcut} | ${commandShortcut}`
+      : dictationShortcut;
   }
 }
 
@@ -116,6 +121,7 @@ function updatePreview(text, { mode = "dictation", phase = "preview", selectedTe
       polished: "Polished transcript",
       result: "Rewrite result",
       recovering: "Recovering",
+      recovery: "Recovery",
       error: "Needs retry",
     };
     previewMeta.textContent = labels[phase] || "Preview";
@@ -139,21 +145,82 @@ function updateRecoveryActions(payload = null) {
   const retryRecovery = document.getElementById("retryRecovery");
   const retryMic = document.getElementById("retryMic");
   const testMic = document.getElementById("testMic");
+  const pastePartial = document.getElementById("pastePartial");
   const retryPaste = document.getElementById("retryPaste");
   const copyOutput = document.getElementById("copyOutput");
+  const showHistory = document.getElementById("showHistory");
   const openSettings = document.getElementById("openSettings");
+  const dismissWindow = document.getElementById("dismissWindow");
   if (!root || !copyPartial || !copyCommand || !retryRecovery) return;
 
   const shouldShow = Boolean(payload?.show);
   root.style.display = shouldShow ? "flex" : "none";
   retryRecovery.style.display = payload?.savedAudio || payload?.target ? "inline-block" : "none";
   copyPartial.style.display = payload?.copyPartial || payload?.partialText ? "inline-block" : "none";
+  if (pastePartial) pastePartial.style.display = payload?.pastePartial || payload?.partialText ? "inline-block" : "none";
   copyCommand.style.display = payload?.copyCommand || payload?.command ? "inline-block" : "none";
   if (retryMic) retryMic.style.display = payload?.retryMic ? "inline-block" : "none";
   if (testMic) testMic.style.display = payload?.testMic ? "inline-block" : "none";
   if (retryPaste) retryPaste.style.display = payload?.retryPaste ? "inline-block" : "none";
   if (copyOutput) copyOutput.style.display = payload?.copyOutput ? "inline-block" : "none";
+  if (showHistory) showHistory.style.display = payload?.history === false ? "none" : "inline-block";
   if (openSettings) openSettings.style.display = payload?.settings ? "inline-block" : "none";
+  if (dismissWindow) dismissWindow.style.display = payload?.dismiss === false ? "none" : "inline-block";
+}
+
+function hideHistoryPanel() {
+  const panel = document.getElementById("historyPanel");
+  if (!panel) return;
+  panel.style.display = "none";
+  panel.replaceChildren();
+}
+
+async function renderHistoryPanel() {
+  const panel = document.getElementById("historyPanel");
+  if (!panel) return;
+  const entries = await controller.loadTranscriptHistory(5);
+  panel.replaceChildren();
+  panel.style.display = "block";
+  if (!entries.length) {
+    const empty = document.createElement("div");
+    empty.className = "historyText";
+    empty.textContent = "No saved transcripts yet.";
+    panel.appendChild(empty);
+    return;
+  }
+
+  for (const entry of entries) {
+    const row = document.createElement("div");
+    row.className = "historyItem";
+
+    const text = document.createElement("div");
+    text.className = "historyText";
+    const meta = document.createElement("span");
+    meta.className = "historyMeta";
+    const date = entry.modified ? new Date(entry.modified).toLocaleTimeString() : "";
+    meta.textContent = `${date} | ${entry.chars || String(entry.text || "").length} chars`;
+    text.textContent = String(entry.text || "").replace(/\s+/g, " ").slice(0, 120);
+    text.appendChild(meta);
+
+    const paste = document.createElement("button");
+    paste.type = "button";
+    paste.textContent = "Paste";
+    paste.addEventListener("click", () => {
+      controller.setRecoveryText(entry.text);
+      controller.pasteRecoveryPartial();
+    });
+
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.textContent = "Copy";
+    copy.addEventListener("click", async () => {
+      controller.setRecoveryText(entry.text);
+      await controller.copyRecoveryPartial();
+    });
+
+    row.append(text, paste, copy);
+    panel.appendChild(row);
+  }
 }
 
 async function refreshMicSelection() {
@@ -250,6 +317,7 @@ async function boot() {
     mediaRecorderTimesliceMs: runtimeConfig.recorderTimesliceMs || 150,
     doneHideWindowMs: runtimeConfig.doneHideWindowMs || 900,
     hideWindow: isMac ? () => window.electronAPI.hideWindow() : null,
+    dismissWindow: () => window.electronAPI.hideWindow(),
     scheduleHideWindow: (delayMs) => window.electronAPI.scheduleHideWindow(delayMs),
     cancelHideWindow: () => window.electronAPI.cancelHideWindow(),
     focusRestoreDelayMs: isMac ? 180 : 60,
@@ -259,6 +327,7 @@ async function boot() {
     transcribeAudioChunked: (arrayBuffers) => window.electronAPI.transcribeAudioChunked(arrayBuffers),
     retryRecovery: (target, options) => window.electronAPI.retryRecovery(target, options),
     deleteRecovery: (target) => window.electronAPI.deleteRecovery(target),
+    listTranscripts: (limit) => window.electronAPI.listTranscripts(limit),
     polishDictation: (payload) => window.electronAPI.polishDictation(payload),
     processCommand: (payload) => window.electronAPI.processCommand(payload),
     simulateTyping: (text) => window.electronAPI.simulateTyping(text),
@@ -306,7 +375,10 @@ async function boot() {
   }
 
   window.electronAPI.onToggleRecording((payload = {}) => {
-    updateRecoveryActions(null);
+    if (!payload.showRecovery) {
+      updateRecoveryActions(null);
+      hideHistoryPanel();
+    }
     if (runtimeConfig?.apiKeyOk === false) {
       updateStatus("API key missing", "red");
       updatePreview("Set GROQ_API_KEY before recording.", {
@@ -337,6 +409,13 @@ async function boot() {
     controller.copyRecoveryPartial().catch((error) => {
       console.error("Copy partial failed:", error);
       updateStatus("Copy failed", "red");
+    });
+  });
+
+  document.getElementById("pastePartial")?.addEventListener("click", () => {
+    controller.pasteRecoveryPartial().catch((error) => {
+      console.error(`Paste draft failed: ${formatError(error)}`);
+      updateStatus("Paste failed", "red");
     });
   });
 
@@ -373,6 +452,21 @@ async function boot() {
     });
   });
 
+  document.getElementById("showHistory")?.addEventListener("click", () => {
+    renderHistoryPanel().catch((error) => {
+      console.error(`History failed: ${formatError(error)}`);
+      updateStatus("History failed", "red");
+    });
+  });
+
+  document.getElementById("dismissWindow")?.addEventListener("click", () => {
+    hideHistoryPanel();
+    controller.dismissWindowNow().catch((error) => {
+      console.error(`Close failed: ${formatError(error)}`);
+      updateStatus("Close failed", "red");
+    });
+  });
+
   window.electronAPI.onTypingProgress?.((progress = {}) => {
     if (progress.total > 1) {
       updateStatus(`Inserting ${progress.index}/${progress.total}...`, "green");
@@ -381,6 +475,13 @@ async function boot() {
 
   window.electronAPI.onRuntimeConfigUpdated?.((nextConfig) => {
     applyRuntimeConfig(nextConfig);
+  });
+
+  window.electronAPI.onAppResume?.(() => {
+    if (controller.getState() === STATES.RECORDING) return;
+    refreshMicSelection().catch((error) => {
+      console.error(`Resume refresh failed: ${formatError(error)}`);
+    });
   });
 
   navigator.mediaDevices?.addEventListener?.("devicechange", () => {

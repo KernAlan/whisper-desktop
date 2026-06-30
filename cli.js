@@ -41,8 +41,24 @@ if (args.length > 0) {
   return;
 }
 
-// --- Interactive mode: launch Electron + REPL ---
 const electronBin = require("electron");
+const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+
+if (!isInteractive) {
+  const electronProc = spawn(String(electronBin), ["."], {
+    cwd: __dirname,
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true,
+    env: { ...process.env, WHISPER_PIPE: PIPE_NAME },
+  });
+
+  electronProc.unref();
+  console.log("Whisper Desktop started in the background.");
+  return;
+}
+
+// --- Interactive mode: launch Electron + REPL ---
 const electronProc = spawn(String(electronBin), ["."], {
   cwd: __dirname,
   stdio: ["ignore", "inherit", "inherit"],

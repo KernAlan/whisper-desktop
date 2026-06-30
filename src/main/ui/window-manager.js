@@ -93,11 +93,39 @@ class WindowManager {
   showWindow({ autoHide = true } = {}) {
     if (!this.mainWindow) return;
     this.cancelHide();
+    this.recoverWindowState();
+    if (this.mainWindow.isMinimized()) {
+      this.mainWindow.restore();
+    }
     const { workArea } = screen.getPrimaryDisplay();
-    this.mainWindow.setPosition(workArea.x + workArea.width - 380, workArea.y + workArea.height - 320);
+    this.mainWindow.setBounds({
+      x: workArea.x + workArea.width - 380,
+      y: workArea.y + workArea.height - 320,
+      width: 360,
+      height: 300,
+    });
     this.mainWindow.showInactive();
+    this.mainWindow.moveTop();
     if (autoHide) {
       this.scheduleHide();
+    }
+  }
+
+  recoverWindowState() {
+    if (!this.mainWindow || this.mainWindow.isDestroyed()) return;
+    this.mainWindow.setSkipTaskbar(true);
+    this.mainWindow.setAlwaysOnTop(false);
+    this.mainWindow.setAlwaysOnTop(true);
+    const { workArea } = screen.getPrimaryDisplay();
+    this.mainWindow.setBounds({
+      x: workArea.x + workArea.width - 380,
+      y: workArea.y + workArea.height - 320,
+      width: 360,
+      height: 300,
+    });
+    if (this.mainWindow.isVisible()) {
+      this.mainWindow.showInactive();
+      this.mainWindow.moveTop();
     }
   }
 

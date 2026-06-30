@@ -154,18 +154,22 @@ function updateRecoveryActions(payload = null) {
   if (!root || !copyPartial || !copyCommand || !retryRecovery) return;
 
   const shouldShow = Boolean(payload?.show);
+  const processing = Boolean(payload?.processing);
   root.style.display = shouldShow ? "flex" : "none";
-  retryRecovery.style.display = payload?.savedAudio || payload?.target ? "inline-block" : "none";
-  copyPartial.style.display = payload?.copyPartial || payload?.partialText ? "inline-block" : "none";
-  if (pastePartial) pastePartial.style.display = payload?.pastePartial || payload?.partialText ? "inline-block" : "none";
-  copyCommand.style.display = payload?.copyCommand || payload?.command ? "inline-block" : "none";
-  if (retryMic) retryMic.style.display = payload?.retryMic ? "inline-block" : "none";
-  if (testMic) testMic.style.display = payload?.testMic ? "inline-block" : "none";
-  if (retryPaste) retryPaste.style.display = payload?.retryPaste ? "inline-block" : "none";
-  if (copyOutput) copyOutput.style.display = payload?.copyOutput ? "inline-block" : "none";
-  if (showHistory) showHistory.style.display = payload?.history === false ? "none" : "inline-block";
-  if (openSettings) openSettings.style.display = payload?.settings ? "inline-block" : "none";
-  if (dismissWindow) dismissWindow.style.display = payload?.dismiss === false ? "none" : "inline-block";
+  retryRecovery.style.display = !processing && (payload?.savedAudio || payload?.target) ? "inline-block" : "none";
+  copyPartial.style.display = !processing && (payload?.copyPartial || payload?.partialText) ? "inline-block" : "none";
+  if (pastePartial) pastePartial.style.display = !processing && (payload?.pastePartial || payload?.partialText) ? "inline-block" : "none";
+  copyCommand.style.display = !processing && (payload?.copyCommand || payload?.command) ? "inline-block" : "none";
+  if (retryMic) retryMic.style.display = !processing && payload?.retryMic ? "inline-block" : "none";
+  if (testMic) testMic.style.display = !processing && payload?.testMic ? "inline-block" : "none";
+  if (retryPaste) retryPaste.style.display = !processing && payload?.retryPaste ? "inline-block" : "none";
+  if (copyOutput) copyOutput.style.display = !processing && payload?.copyOutput ? "inline-block" : "none";
+  if (showHistory) showHistory.style.display = !processing && payload?.history !== false ? "inline-block" : "none";
+  if (openSettings) openSettings.style.display = !processing && payload?.settings ? "inline-block" : "none";
+  if (dismissWindow) {
+    dismissWindow.style.display = payload?.dismiss === false ? "none" : "inline-block";
+    dismissWindow.textContent = payload?.cancel ? "Cancel" : "Close";
+  }
 }
 
 function hideHistoryPanel() {

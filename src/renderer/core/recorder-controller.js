@@ -76,6 +76,10 @@ export class RecorderController {
     this.lastRecovery = null;
     this.lastOutputText = "";
     this.pendingRecoveryCleanupTarget = "";
+    this.activePipelineId = 0;
+    this.cancelledPipelineIds = new Set();
+    this.activeRecoveryRetryId = 0;
+    this.cancelledRecoveryRetryIds = new Set();
     this.stateMachine = new RecorderStateMachine(({ next, detail }) => {
       if (next === STATES.ERROR) this.updateStatus(detail || "Error", "red");
     });
@@ -326,6 +330,7 @@ export class RecorderController {
   }
 
   async handleRecordingStop() {
+    const pipelineId = this._beginPipeline();
     const pipelineStartedAt = Date.now();
     let transcribeMs = 0;
     let preprocessMs = 0;
@@ -339,14 +344,28 @@ export class RecorderController {
     let outputText = null;
     let pasteOk = null;
     let keepWindowVisible = false;
+    let cancelled = false;
+    const stopIfCancelled = () => {
+      if (!this._isPipelineCancelled(pipelineId)) return false;
+      cancelled = true;
+      keepWindowVisible = true;
+      return true;
+    };
 
     try {
       this.stateMachine.transition(STATES.TRANSCRIBING, "Transcribing");
       this.updateStatus("Transcribing...", "blue");
+      this.updateRecoveryActions({
+        show: true,
+        processing: true,
+        dismiss: true,
+        cancel: true,
+      });
       this.startProcessingStatusLoop("Transcribing");
       const preprocessStartedAt = Date.now();
       const audioBlob = new Blob(this.audioChunks, { type: "audio/webm" });
       const arrayBuffer = await audioBlob.arrayBuffer();
+      if (stopIfCancelled()) return;
       preprocessMs = Date.now() - preprocessStartedAt;
       bytes = arrayBuffer.byteLength;
 
@@ -383,6 +402,7 @@ export class RecorderController {
         for (const group of chunkGroups) {
           const blob = new Blob(group, { type: "audio/webm" });
           buffers.push(await blob.arrayBuffer());
+          if (stopIfCancelled()) return;
         }
         transcript = await this._transcribeWithAutoRecovery(() =>
           this.transcribeAudioChunked(buffers)
@@ -392,6 +412,7 @@ export class RecorderController {
           this.transcribeAudio(arrayBuffer)
         );
       }
+      if (stopIfCancelled()) return;
       transcribeMs = Date.now() - transcribeStartedAt;
       this.stopProcessingStatusLoop();
 
@@ -431,7 +452,10 @@ export class RecorderController {
         return;
       }
 
-      const output = await this._processTranscriptForPaste(transcript);
+      const output = await this._processTranscriptForPaste(transcript, {
+        shouldCancel: () => this._isPipelineCancelled(pipelineId),
+      });
+      if (output.cancelled || stopIfCancelled()) return;
       outputText = output.outputText;
       polishMs = output.polishMs;
       pasteOk = output.pasteOk;
@@ -442,6 +466,7 @@ export class RecorderController {
       if (!pasteOk) keepWindowVisible = true;
       await this._cleanupRecoveredAudioIfSafe(output);
     } catch (error) {
+      if (stopIfCancelled()) return;
       console.error("Pipeline error:", error);
       this.stopProcessingStatusLoop();
       const recoveryFiles = Array.isArray(error?.recoveryFiles) ? error.recoveryFiles : [];
@@ -522,13 +547,22 @@ export class RecorderController {
       this.stopPreviewLoop();
       this.stopRecordingStatusLoop();
       this.stopProcessingStatusLoop();
+      if (this._isPipelineCancelled(pipelineId)) {
+        cancelled = true;
+        keepWindowVisible = true;
+      }
       if (!keepWindowVisible && this.scheduleHideWindow) {
         this.scheduleHideWindow(this.doneHideWindowMs).catch((error) => {
           console.warn("Failed to schedule window hide:", error);
         });
       }
+      if (this.activePipelineId === pipelineId) {
+        this.activePipelineId = 0;
+      }
+      this.cancelledPipelineIds.delete(pipelineId);
       this.onDiagnostics({
         type: "pipeline-latency",
+        cancelled,
         totalMs: Date.now() - pipelineStartedAt,
         preprocessMs,
         transcribeMs,
@@ -556,7 +590,18 @@ export class RecorderController {
       return false;
     }
 
-    this.updateRecoveryActions({ ...this.lastRecovery, show: false });
+    const retryId = this._beginRecoveryRetry();
+    const stopIfCancelled = () => {
+      if (!this._isRecoveryRetryCancelled(retryId)) return false;
+      return true;
+    };
+
+    this.updateRecoveryActions({
+      show: true,
+      processing: true,
+      dismiss: true,
+      cancel: true,
+    });
     this.updateStatus("Retrying saved audio...", "blue");
     this.updatePreview("Retrying saved recording.", {
       mode: this.lastRecovery.mode || this.mode,
@@ -570,12 +615,16 @@ export class RecorderController {
       const transcript = this._readTranscriptionResult(
         await this.retryRecovery(this.lastRecovery.target, { removeOnSuccess: false })
       );
+      if (stopIfCancelled()) return false;
       this.stopProcessingStatusLoop();
       const recoveryTarget = this.lastRecovery.target;
       this.pendingRecoveryCleanupTarget = recoveryTarget;
       this.lastRecovery = null;
       this.updateRecoveryActions(null);
-      const output = await this._processTranscriptForPaste(transcript);
+      const output = await this._processTranscriptForPaste(transcript, {
+        shouldCancel: () => this._isRecoveryRetryCancelled(retryId),
+      });
+      if (output.cancelled || stopIfCancelled()) return false;
       await this._cleanupRecoveredAudioIfSafe(output, recoveryTarget);
       if (this.scheduleHideWindow) {
         this.scheduleHideWindow(this.doneHideWindowMs).catch((error) => {
@@ -584,10 +633,16 @@ export class RecorderController {
       }
       return true;
     } catch (error) {
+      if (stopIfCancelled()) return false;
       this.stopProcessingStatusLoop();
       this.updateStatus("Retry failed. Saved audio is still available.", "red");
       this.updateRecoveryActions({ ...this.lastRecovery, show: true });
       return false;
+    } finally {
+      if (this.activeRecoveryRetryId === retryId) {
+        this.activeRecoveryRetryId = 0;
+      }
+      this.cancelledRecoveryRetryIds.delete(retryId);
     }
   }
 
@@ -699,11 +754,18 @@ export class RecorderController {
   }
 
   async dismissWindowNow() {
+    const state = this.getState();
+    if (this.activePipelineId || state === STATES.TRANSCRIBING || state === STATES.PASTING) {
+      this._cancelActivePipeline();
+    }
+    if (this.activeRecoveryRetryId || state === STATES.TRANSCRIBING || state === STATES.PASTING) {
+      this._cancelActiveRecoveryRetry();
+    }
     this.stopPreviewLoop();
     this.stopRecordingStatusLoop();
     this.stopProcessingStatusLoop();
     this.updateRecoveryActions(null);
-    if (this.getState() !== STATES.RECORDING) {
+    if (state !== STATES.RECORDING) {
       this.stateMachine.transition(STATES.IDLE, "Dismissed");
     }
     if (this.dismissWindow) {
@@ -780,7 +842,23 @@ export class RecorderController {
     return true;
   }
 
-  async _processTranscriptForPaste(transcript) {
+  async _processTranscriptForPaste(transcript, { shouldCancel } = {}) {
+    const isCancelled = () => typeof shouldCancel === "function" && shouldCancel();
+    let polishMs = 0;
+    let textToPaste = transcript;
+    const cancelledResult = () => ({
+      outputText: textToPaste || "",
+      polishMs,
+      pasteOk: null,
+      pasteMs: 0,
+      restoreMs: 0,
+      pasteChunks: 0,
+      clipboardRestoreMode: "unknown",
+      cancelled: true,
+    });
+
+    if (isCancelled()) return cancelledResult();
+
     this.updatePreview(transcript, {
       mode: this.mode,
       phase: "final",
@@ -789,14 +867,21 @@ export class RecorderController {
     });
     this.stateMachine.transition(STATES.PASTING, "Injecting text");
     this.updateStatus(this.mode === "command" ? "Applying command..." : "Inserting text...", "green");
+    this.updateRecoveryActions({
+      show: true,
+      processing: true,
+      dismiss: true,
+      cancel: true,
+    });
 
-    let polishMs = 0;
-    let textToPaste = transcript;
+    if (isCancelled()) return cancelledResult();
+
     if (this.mode === "command") {
       textToPaste = await this.processCommand({
         selectedText: this.selectedText,
         instruction: transcript,
       });
+      if (isCancelled()) return cancelledResult();
       if (!textToPaste || !textToPaste.trim()) {
         this.updateStatus("Command returned no text", "red");
         this.stateMachine.transition(STATES.IDLE, "Empty command result");
@@ -822,6 +907,7 @@ export class RecorderController {
         const polishStartedAt = Date.now();
         const polishedText = await this.polishDictation({ transcript });
         polishMs = Date.now() - polishStartedAt;
+        if (isCancelled()) return cancelledResult();
         if (polishedText && polishedText.trim()) {
           textToPaste = polishedText;
           this.updatePreview(textToPaste, {
@@ -837,6 +923,7 @@ export class RecorderController {
       }
     }
 
+    if (isCancelled()) return cancelledResult();
     this.lastOutputText = textToPaste;
     if (this.hideWindow) {
       try {
@@ -846,7 +933,9 @@ export class RecorderController {
         // Ignore hide/focus handoff failures and still attempt paste.
       }
     }
+    if (isCancelled()) return cancelledResult();
     const pasteResult = await this.simulateTyping(textToPaste);
+    if (isCancelled()) return cancelledResult();
     const ok = typeof pasteResult === "boolean" ? pasteResult : !!pasteResult?.ok;
     if (ok) {
       this.updateStatus("Done", "green");
@@ -996,6 +1085,36 @@ export class RecorderController {
 
   _sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  _beginPipeline() {
+    this.activePipelineId += 1;
+    return this.activePipelineId;
+  }
+
+  _cancelActivePipeline() {
+    if (this.activePipelineId) {
+      this.cancelledPipelineIds.add(this.activePipelineId);
+    }
+  }
+
+  _isPipelineCancelled(pipelineId) {
+    return Boolean(pipelineId && this.cancelledPipelineIds.has(pipelineId));
+  }
+
+  _beginRecoveryRetry() {
+    this.activeRecoveryRetryId += 1;
+    return this.activeRecoveryRetryId;
+  }
+
+  _cancelActiveRecoveryRetry() {
+    if (this.activeRecoveryRetryId) {
+      this.cancelledRecoveryRetryIds.add(this.activeRecoveryRetryId);
+    }
+  }
+
+  _isRecoveryRetryCancelled(retryId) {
+    return Boolean(retryId && this.cancelledRecoveryRetryIds.has(retryId));
   }
 
   _splitChunks(audioChunks, sizeLimit) {

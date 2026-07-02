@@ -109,9 +109,13 @@ export class RecorderController {
 
   async initialize() {
     try {
-      this.stateMachine.transition(STATES.ARMING, "Initializing microphone");
-      await this.requestMicrophoneAccess();
-      await this.audioEngine.ensureStream();
+      this.stateMachine.transition(STATES.ARMING, "Checking microphone");
+      const selectedDevice = await this.audioEngine.refreshDeviceSelection();
+      if (!selectedDevice) {
+        this.updateStatus("No microphone found", "red");
+        this.stateMachine.transition(STATES.ERROR, "No microphone found");
+        return;
+      }
       const activeDevice = this.audioEngine.getActiveDevice();
       this.updateStatus(`Ready (${activeDevice.label})`, "black");
       this.stateMachine.transition(STATES.IDLE, "Ready");
@@ -185,6 +189,7 @@ export class RecorderController {
       this.startPreviewLoop();
       this.startRecordingStatusLoop();
     } catch (error) {
+      await this._releaseAudioStream("start failure");
       console.error(`Error starting recording: ${formatError(error)}`);
       const status = microphoneStatusForError(error);
       this.updatePreview(userMessageForFailure(error, status), {
@@ -353,6 +358,7 @@ export class RecorderController {
     };
 
     try {
+      await this._releaseAudioStream("recording stop");
       this.stateMachine.transition(STATES.TRANSCRIBING, "Transcribing");
       this.updateStatus("Transcribing...", "blue");
       this.updateRecoveryActions({
@@ -755,6 +761,11 @@ export class RecorderController {
 
   async dismissWindowNow() {
     const state = this.getState();
+    if (state === STATES.RECORDING && this.mediaRecorder?.state !== "inactive") {
+      this.stopRecording();
+    } else {
+      await this._releaseAudioStream("dismiss");
+    }
     if (this.activePipelineId || state === STATES.TRANSCRIBING || state === STATES.PASTING) {
       this._cancelActivePipeline();
     }
@@ -1085,6 +1096,15 @@ export class RecorderController {
 
   _sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  async _releaseAudioStream(reason) {
+    if (!this.audioEngine || typeof this.audioEngine.releaseStream !== "function") return;
+    try {
+      await this.audioEngine.releaseStream();
+    } catch (error) {
+      console.warn(`Failed to release microphone stream (${reason}):`, error);
+    }
   }
 
   _beginPipeline() {

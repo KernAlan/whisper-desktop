@@ -33,6 +33,21 @@ export class AudioEngine {
     this.activeDevice = null;
   }
 
+  async refreshDeviceSelection() {
+    const selectedDevice = await this.chooseDevice();
+    if (!selectedDevice) {
+      this.activeDevice = null;
+      return null;
+    }
+
+    this.activeDevice = {
+      id: selectedDevice.deviceId || "default",
+      label: selectedDevice.label || "default input",
+    };
+    this.setPreferredDeviceId(this.activeDevice.id);
+    return this.activeDevice;
+  }
+
   async ensureStream({ forceRefresh = false } = {}) {
     if (!forceRefresh && this.activeStream) {
       const hasLiveTrack = this.activeStream
@@ -45,9 +60,7 @@ export class AudioEngine {
     const deviceId = selectedDevice?.deviceId;
     const constraints = createAudioConstraints(deviceId);
 
-    if (this.activeStream) {
-      this.activeStream.getTracks().forEach((track) => track.stop());
-    }
+    await this.releaseStream();
 
     let usedFallbackDevice = false;
     try {
@@ -82,15 +95,36 @@ export class AudioEngine {
       deviceId: this.activeDevice.id,
     });
 
-    if (this.audioContext && this.audioContext.state !== "closed") {
-      await this.audioContext.close();
+    try {
+      if (this.audioContext && this.audioContext.state !== "closed") {
+        await this.audioContext.close();
+      }
+      this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      this.analyser = this.audioContext.createAnalyser();
+      const source = this.audioContext.createMediaStreamSource(this.activeStream);
+      source.connect(this.analyser);
+    } catch (error) {
+      await this.releaseStream();
+      throw error;
     }
-    this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    this.analyser = this.audioContext.createAnalyser();
-    const source = this.audioContext.createMediaStreamSource(this.activeStream);
-    source.connect(this.analyser);
 
     return this.activeStream;
+  }
+
+  async releaseStream() {
+    if (this.activeStream) {
+      this.activeStream.getTracks().forEach((track) => track.stop());
+      this.activeStream = null;
+    }
+    this.analyser = null;
+
+    if (this.audioContext && this.audioContext.state !== "closed") {
+      const context = this.audioContext;
+      this.audioContext = null;
+      await context.close();
+    } else {
+      this.audioContext = null;
+    }
   }
 
   getAnalyser() {

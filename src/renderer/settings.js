@@ -209,10 +209,12 @@ async function addSuggestions() {
 }
 
 async function testMic() {
+  let stream = null;
+  let audioContext = null;
   try {
     setStatus("Testing mic");
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
     const analyser = audioContext.createAnalyser();
     const source = audioContext.createMediaStreamSource(stream);
     source.connect(analyser);
@@ -227,11 +229,16 @@ async function testMic() {
       if (average > 10) detected = true;
     }
 
-    stream.getTracks().forEach((track) => track.stop());
-    await audioContext.close();
     setStatus(detected ? "Mic working" : "No audio detected", detected ? "ok" : "error");
   } catch (error) {
     setStatus(`${microphoneStatusForError(error)}: ${formatError(error)}`, "error");
+  } finally {
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop());
+    }
+    if (audioContext && audioContext.state !== "closed") {
+      await audioContext.close().catch(() => {});
+    }
   }
 }
 

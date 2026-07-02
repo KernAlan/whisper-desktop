@@ -227,13 +227,18 @@ async function renderHistoryPanel() {
   }
 }
 
-async function refreshMicSelection() {
+async function refreshMicSelection({ requestAccess = true } = {}) {
   if (!controller) return { ok: false, error: "not initialized" };
   try {
-    await controller.requestMicrophoneAccess();
-    await controller.audioEngine.ensureStream({ forceRefresh: true });
-    const device = controller.audioEngine.getActiveDevice();
-    updateStatus(`Mic updated (${device.label})`, "black");
+    if (requestAccess) {
+      await controller.requestMicrophoneAccess();
+    }
+    const device = await controller.audioEngine.refreshDeviceSelection();
+    if (!device) {
+      updateStatus("No microphone found", "red");
+      return { ok: false, error: "No microphone found" };
+    }
+    updateStatus(`Mic selected (${device.label})`, "black");
     updateRecoveryActions(null);
     sendDiagnostics({
       type: "mic-refresh",
@@ -258,9 +263,11 @@ async function refreshMicSelection() {
 }
 
 async function testMicrophone() {
+  let stream = null;
+  let audioContext = null;
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
     const analyser = audioContext.createAnalyser();
     const microphone = audioContext.createMediaStreamSource(stream);
     microphone.connect(analyser);
@@ -274,9 +281,6 @@ async function testMicrophone() {
       const average = dataArray.reduce((sum, value) => sum + value, 0) / dataArray.length;
       if (average > 10) detected = true;
     }
-
-    stream.getTracks().forEach((track) => track.stop());
-    await audioContext.close();
 
     if (detected) {
       updateStatus("Microphone is working", "green");
@@ -302,6 +306,13 @@ async function testMicrophone() {
       settings: true,
     });
     return { detected: false, error: errorText };
+  } finally {
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop());
+    }
+    if (audioContext && audioContext.state !== "closed") {
+      await audioContext.close().catch(() => {});
+    }
   }
 }
 
@@ -343,6 +354,13 @@ async function boot() {
   });
   controller.setPreviewIntervalMs(runtimeConfig.previewIntervalMs);
   controller.setDictationMode(runtimeConfig.dictationMode);
+
+  window.addEventListener("beforeunload", () => {
+    const release = controller.audioEngine.releaseStream?.();
+    if (release && typeof release.catch === "function") {
+      release.catch(() => {});
+    }
+  });
 
   try {
     await controller.initialize();
@@ -483,14 +501,14 @@ async function boot() {
 
   window.electronAPI.onAppResume?.(() => {
     if (controller.getState() === STATES.RECORDING) return;
-    refreshMicSelection().catch((error) => {
+    refreshMicSelection({ requestAccess: false }).catch((error) => {
       console.error(`Resume refresh failed: ${formatError(error)}`);
     });
   });
 
   navigator.mediaDevices?.addEventListener?.("devicechange", () => {
     if (controller.getState() === STATES.RECORDING) return;
-    refreshMicSelection();
+    refreshMicSelection({ requestAccess: false });
   });
 
   window.electronAPI.onRefreshMic(async () => {

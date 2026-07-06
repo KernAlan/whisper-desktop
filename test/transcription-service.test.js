@@ -5,6 +5,21 @@ const path = require("node:path");
 const fs = require("fs-extra");
 const { TranscriptionService } = require("../src/main/services/transcription-service");
 
+async function waitFor(assertion, timeoutMs = 1000) {
+  const startedAt = Date.now();
+  let lastError;
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      assertion();
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  throw lastError || new Error("Timed out");
+}
+
 test("transcribe failure saves recovery file and returns recovery metadata", async () => {
   const recoveryDir = fs.mkdtempSync(path.join(os.tmpdir(), "whisper-recovery-"));
   const service = new TranscriptionService({
@@ -30,6 +45,94 @@ test("transcribe failure saves recovery file and returns recovery metadata", asy
       return true;
     }
   );
+
+  fs.removeSync(recoveryDir);
+});
+
+test("final transcription aborts an in-flight preview request", async () => {
+  const recoveryDir = fs.mkdtempSync(path.join(os.tmpdir(), "whisper-recovery-"));
+  const signals = [];
+  let calls = 0;
+  const service = new TranscriptionService({
+    apiKey: "test-key",
+    model: "whisper-large-v3-turbo",
+    fallbackModel: "whisper-large-v3",
+    timeoutMs: 1000,
+    maxQueue: 2,
+    recoveryDir,
+    logger: { log() {}, warn() {}, error() {} },
+  });
+
+  service.groq = {
+    audio: {
+      transcriptions: {
+        create(_body, options = {}) {
+          calls += 1;
+          signals.push(options.signal);
+          if (calls === 1) {
+            return new Promise((_resolve, reject) => {
+              options.signal.addEventListener("abort", () => reject(new Error("aborted preview")));
+            });
+          }
+          return Promise.resolve("final text");
+        },
+      },
+    },
+  };
+
+  const preview = service.transcribePreview(Buffer.from("preview audio"));
+  await waitFor(() => assert.equal(signals.length, 1));
+
+  const finalText = await service.transcribe(Buffer.from("final audio"));
+  const previewResult = await preview;
+
+  assert.equal(signals[0].aborted, true);
+  assert.equal(previewResult.skipped, true);
+  assert.equal(previewResult.text, "");
+  assert.equal(finalText, "final text");
+
+  fs.removeSync(recoveryDir);
+});
+
+test("_transcribeOne aborts the Groq request when its timeout expires", async () => {
+  const recoveryDir = fs.mkdtempSync(path.join(os.tmpdir(), "whisper-recovery-"));
+  const tempFile = path.join(recoveryDir, "audio.webm");
+  await fs.writeFile(tempFile, Buffer.from("not real audio"));
+  let aborted = false;
+  const service = new TranscriptionService({
+    apiKey: "test-key",
+    model: "whisper-large-v3-turbo",
+    fallbackModel: "whisper-large-v3",
+    timeoutMs: 5,
+    maxQueue: 2,
+    recoveryDir,
+    logger: { log() {}, warn() {}, error() {} },
+  });
+
+  service.groq = {
+    audio: {
+      transcriptions: {
+        create(_body, options = {}) {
+          return new Promise((_resolve, reject) => {
+            options.signal.addEventListener("abort", () => {
+              aborted = true;
+              reject(new Error("request aborted"));
+            });
+          });
+        },
+      },
+    },
+  };
+
+  await assert.rejects(
+    service._transcribeOne(tempFile),
+    (error) => {
+      assert.equal(error.code, "ETIMEDOUT");
+      assert.match(error.message, /Transcription timed out after 5ms/);
+      return true;
+    }
+  );
+  assert.equal(aborted, true);
 
   fs.removeSync(recoveryDir);
 });

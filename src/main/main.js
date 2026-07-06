@@ -198,6 +198,7 @@ function syncRuntimeServices() {
     model: runtimeSettings.model,
     fallbackModel: runtimeSettings.fallbackModel,
   });
+  transcriptionService.setTimeoutMs(runtimeSettings.timeoutMs);
   textProcessingService.setModel(runtimeSettings.textModel);
   typingService.setRestoreConfig({
     restoreMode: runtimeSettings.clipboardRestoreMode,

@@ -7,12 +7,22 @@ const MAX_RECOVERY_SESSIONS = 10;
 const PREVIEW_TIMEOUT_MS = 8000;
 const PREVIEW_WARNING_THROTTLE_MS = 30000;
 
-function withTimeout(promise, timeoutMs, message) {
-  let timeoutId;
-  const timeoutPromise = new Promise((_, reject) => {
-    timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
-  });
-  return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeoutId));
+function timeoutError(message, cause) {
+  const error = new Error(message);
+  error.code = "ETIMEDOUT";
+  error.cause = cause;
+  return error;
+}
+
+function cancellationError(cause) {
+  const error = new Error("Transcription cancelled");
+  error.code = "ECANCELLED";
+  error.cause = cause;
+  return error;
+}
+
+function isCancellationError(error) {
+  return error?.code === "ECANCELLED";
 }
 
 class TranscriptionService {
@@ -38,6 +48,8 @@ class TranscriptionService {
     this.groq = new Groq({ apiKey });
     this.active = false;
     this.previewActive = false;
+    this.previewAbortController = null;
+    this.previewAbortRequested = false;
     this.lastPreviewWarningAt = 0;
     this.lastPreviewWarningMessage = "";
     this.queue = [];
@@ -53,10 +65,19 @@ class TranscriptionService {
     }
   }
 
+  setTimeoutMs(timeoutMs) {
+    const next = Number(timeoutMs);
+    if (Number.isFinite(next) && next >= 1000) {
+      this.timeoutMs = next;
+    }
+  }
+
   async transcribe(arrayBuffer) {
     if (this.queue.length >= this.maxQueue) {
       throw new Error("Transcription queue is full. Please try again.");
     }
+
+    this._abortPreview("final transcription requested");
 
     return new Promise((resolve, reject) => {
       this.queue.push({ arrayBuffer, resolve, reject, queuedAt: Date.now() });
@@ -116,6 +137,7 @@ class TranscriptionService {
     }
 
     this.previewActive = true;
+    this.previewAbortRequested = false;
     const tempFilePath = path.join(
       os.tmpdir(),
       `preview_audio_${Date.now()}_${Math.random().toString(36).slice(2)}.webm`
@@ -125,9 +147,18 @@ class TranscriptionService {
       await fs.writeFile(tempFilePath, Buffer.from(arrayBuffer));
       const result = await this._transcribeOne(tempFilePath, {
         timeoutMs: Math.min(this.timeoutMs, PREVIEW_TIMEOUT_MS),
+        onAbortController: (controller) => {
+          this.previewAbortController = controller;
+          if (this.previewAbortRequested && !controller.signal?.aborted) {
+            controller.abort();
+          }
+        },
       });
       return { skipped: false, text: result.text };
     } catch (error) {
+      if (isCancellationError(error)) {
+        return { skipped: true, text: "" };
+      }
       this._warnPreviewFailure(error);
       return {
         skipped: true,
@@ -136,6 +167,8 @@ class TranscriptionService {
       };
     } finally {
       this.previewActive = false;
+      this.previewAbortController = null;
+      this.previewAbortRequested = false;
       await fs.unlink(tempFilePath).catch(() => {});
     }
   }
@@ -163,24 +196,29 @@ class TranscriptionService {
     this.logger.warn(`[Preview] ${message}`);
   }
 
+  _abortPreview(reason) {
+    if (!this.previewActive) return;
+    this.previewAbortRequested = true;
+    if (!this.previewAbortController) return;
+    if (this.previewAbortController.signal?.aborted) return;
+    this.logger.log(`[Preview] Aborting live preview: ${reason}`);
+    this.previewAbortController.abort();
+  }
+
   async _transcribeOne(tempFilePath, options = {}) {
     if (!this.apiKey) throw new Error("Missing GROQ_API_KEY in environment");
 
     let usedModel = this.model;
-    const primaryStream = fs.createReadStream(tempFilePath);
     const timeoutMs = Number(options.timeoutMs || this.timeoutMs);
 
     let response;
     try {
-      response = await withTimeout(
-        this.groq.audio.transcriptions.create({
-          file: primaryStream,
-          model: this.model,
-          response_format: "text",
-          prompt: this.dictionaryService?.buildPrompt?.() || undefined,
-        }),
+      response = await this._createTranscription(
+        tempFilePath,
+        this.model,
         timeoutMs,
-        `Transcription timed out after ${timeoutMs}ms`
+        `Transcription timed out after ${timeoutMs}ms`,
+        options
       );
     } catch (error) {
       const message = error?.message || "";
@@ -190,21 +228,52 @@ class TranscriptionService {
       if (!shouldFallback) throw error;
 
       usedModel = this.fallbackModel;
-      const fallbackStream = fs.createReadStream(tempFilePath);
-      response = await withTimeout(
-        this.groq.audio.transcriptions.create({
-          file: fallbackStream,
-          model: this.fallbackModel,
-          response_format: "text",
-          prompt: this.dictionaryService?.buildPrompt?.() || undefined,
-        }),
+      response = await this._createTranscription(
+        tempFilePath,
+        this.fallbackModel,
         timeoutMs,
-        `Fallback transcription timed out after ${timeoutMs}ms`
+        `Fallback transcription timed out after ${timeoutMs}ms`,
+        options
       );
     }
 
     const text = typeof response === "string" ? response : response?.text;
     return { text: text || "", model: usedModel };
+  }
+
+  async _createTranscription(tempFilePath, model, timeoutMs, timeoutMessage, options = {}) {
+    const controller = new AbortController();
+    let timedOut = false;
+    const stream = fs.createReadStream(tempFilePath);
+    const timeoutId = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+
+    if (typeof options.onAbortController === "function") {
+      options.onAbortController(controller);
+    }
+
+    try {
+      return await this.groq.audio.transcriptions.create(
+        {
+          file: stream,
+          model,
+          response_format: "text",
+          prompt: this.dictionaryService?.buildPrompt?.() || undefined,
+        },
+        { signal: controller.signal }
+      );
+    } catch (error) {
+      if (timedOut) throw timeoutError(timeoutMessage, error);
+      if (controller.signal.aborted) throw cancellationError(error);
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
+      if (!stream.destroyed) {
+        stream.destroy();
+      }
+    }
   }
 
   async _saveToRecovery(tempFilePath, options = {}) {
@@ -445,12 +514,16 @@ class TranscriptionService {
       }
     } catch (error) {
       // Failure — save to recovery instead of deleting
+      const durationMs = Date.now() - startedAt;
       if (tempFilePath && (await fs.pathExists(tempFilePath))) {
         const recovery = await this._saveToRecovery(tempFilePath);
         if (recovery) {
           error.recoveryFiles = [recovery];
         }
       }
+      this.logger.warn(
+        `[Transcribe] failed queueDelay=${queueDelay}ms duration=${durationMs}ms error=${error?.message || error}`
+      );
       item.reject(error);
     } finally {
       this.active = false;

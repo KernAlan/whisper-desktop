@@ -18,7 +18,7 @@ function defaults() {
     textModel: "llama-3.1-8b-instant",
     polishChunkWords: 450,
     polishMaxWords: 2500,
-    timeoutMs: 60000,
+    timeoutMs: 10000,
     maxQueue: 2,
     recorderTimesliceMs: 150,
     previewIntervalMs: 1500,
@@ -63,17 +63,25 @@ test("RuntimeSettingsService saves and loads mutable settings", () => {
   const saved = applyRuntimeSettings(defaults(), {
     dictationMode: "fast",
     previewIntervalMs: 2200,
-    timeoutMs: 999,
+    timeoutMs: 12000,
   });
   service.saveSync(saved);
 
   const loaded = service.loadSync();
   assert.equal(loaded.dictationMode, "fast");
   assert.equal(loaded.previewIntervalMs, 2200);
-  assert.equal(loaded.timeoutMs, 60000);
+  assert.equal(loaded.timeoutMs, 12000);
   assert.deepEqual(Object.keys(fs.readJsonSync(filePath)).sort(), Object.keys(pickMutable(saved)).sort());
 
   fs.removeSync(dir);
+});
+
+test("applyRuntimeSettings ignores too-low timeout", () => {
+  const next = applyRuntimeSettings(defaults(), {
+    timeoutMs: 999,
+  });
+
+  assert.equal(next.timeoutMs, 10000);
 });
 
 test("RuntimeSettingsService reset removes saved settings", () => {

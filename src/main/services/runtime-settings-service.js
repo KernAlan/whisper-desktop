@@ -8,6 +8,7 @@ const MUTABLE_KEYS = [
   "textModel",
   "polishChunkWords",
   "polishMaxWords",
+  "timeoutMs",
   "recorderTimesliceMs",
   "previewIntervalMs",
   "dictationMode",
@@ -75,6 +76,11 @@ function applyRuntimeSettings(current, payload = {}) {
   const polishMaxWords = cleanNumber(payload.polishMaxWords);
   if (polishMaxWords !== null && polishMaxWords >= next.polishChunkWords) {
     next.polishMaxWords = polishMaxWords;
+  }
+
+  const timeoutMs = cleanNumber(payload.timeoutMs);
+  if (timeoutMs !== null && timeoutMs >= 3000) {
+    next.timeoutMs = timeoutMs;
   }
 
   const recorderTimesliceMs = cleanNumber(payload.recorderTimesliceMs);

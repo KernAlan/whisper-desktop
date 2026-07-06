@@ -3,7 +3,7 @@ import { formatError, microphoneStatusForError, userMessageForFailure } from "./
 
 const CHUNK_SIZE_LIMIT = 20 * 1024 * 1024; // 20MB
 const PREVIEW_SIZE_LIMIT = 2 * 1024 * 1024; // Preview is UX only; keep long recordings for final transcription.
-const AUTO_RECOVERY_RETRY_DELAYS_MS = [1500];
+const AUTO_RECOVERY_RETRY_DELAYS_MS = [1200, 3000, 5000];
 
 export class RecorderController {
   constructor({

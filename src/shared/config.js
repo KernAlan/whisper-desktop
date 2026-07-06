@@ -39,7 +39,7 @@ function loadConfig(env = process.env) {
       apiKey: env.GROQ_API_KEY || "",
       model: transcriptionModel,
       fallbackModel: fallbackTranscriptionModel,
-      timeoutMs: toMs(env.GROQ_TRANSCRIPTION_TIMEOUT_MS, 60000),
+      timeoutMs: toMs(env.GROQ_TRANSCRIPTION_TIMEOUT_MS, 10000),
       maxQueue: toInt(env.GROQ_TRANSCRIPTION_MAX_QUEUE, 2),
     },
     text: {
@@ -60,8 +60,8 @@ function validateConfig(config) {
   if (config.transcription.maxQueue < 1) {
     issues.push("GROQ_TRANSCRIPTION_MAX_QUEUE must be >= 1");
   }
-  if (config.transcription.timeoutMs < 1000) {
-    issues.push("GROQ_TRANSCRIPTION_TIMEOUT_MS must be >= 1000");
+  if (config.transcription.timeoutMs < 3000) {
+    issues.push("GROQ_TRANSCRIPTION_TIMEOUT_MS must be >= 3000");
   }
   if (!["deferred", "blocking", "off"].includes(config.app.clipboardRestoreMode)) {
     issues.push("APP_CLIPBOARD_RESTORE_MODE must be one of: deferred, blocking, off");

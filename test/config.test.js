@@ -15,7 +15,7 @@ test("loadConfig applies defaults", () => {
   assert.equal(config.text.model, "llama-3.1-8b-instant");
   assert.equal(config.text.polishChunkWords, 450);
   assert.equal(config.text.polishMaxWords, 2500);
-  assert.equal(config.transcription.timeoutMs, 60000);
+  assert.equal(config.transcription.timeoutMs, 10000);
 });
 
 test("validateConfig detects missing key", () => {
@@ -31,6 +31,15 @@ test("validateConfig detects preview interval that is too low", () => {
   });
   const issues = validateConfig(config);
   assert.ok(issues.some((issue) => issue.includes("APP_PREVIEW_INTERVAL_MS")));
+});
+
+test("validateConfig detects transcription timeout that is too low", () => {
+  const config = loadConfig({
+    GROQ_API_KEY: "key",
+    GROQ_TRANSCRIPTION_TIMEOUT_MS: "2000",
+  });
+  const issues = validateConfig(config);
+  assert.ok(issues.some((issue) => issue.includes("GROQ_TRANSCRIPTION_TIMEOUT_MS")));
 });
 
 test("validateConfig detects invalid dictation mode", () => {

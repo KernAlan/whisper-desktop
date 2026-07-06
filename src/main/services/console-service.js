@@ -162,6 +162,7 @@ class ConsoleService {
       kv("set profile <name>", "fast | balanced"),
       kv("set timeslice <ms>", "Recorder timeslice (min 50)"),
       kv("set preview <ms>", "Live preview interval (min 1000)"),
+      kv("set timeout <ms>", "Transcription timeout (min 3000)"),
       kv("set restore-delay <ms>", "Clipboard restore delay"),
       kv("refresh mic", "Refresh microphone"),
       kv("test mic", "Test microphone levels"),
@@ -338,6 +339,17 @@ class ConsoleService {
       }
       this.applySettings({ previewIntervalMs: ms });
       this._sendLine(`  Preview -> ${this.runtimeSettings.previewIntervalMs}ms`);
+      return;
+    }
+
+    if (key === "timeout") {
+      const ms = Number(value);
+      if (!Number.isFinite(ms) || ms < 3000) {
+        this._sendLine("  Timeout must be >= 3000");
+        return;
+      }
+      this.applySettings({ timeoutMs: ms });
+      this._sendLine(`  Timeout -> ${this.runtimeSettings.timeoutMs}ms`);
       return;
     }
 

@@ -58,7 +58,7 @@ Tl;dr With the magic that is Whisper and the speed of the Groq servers, I though
    APP_LOG_MAX_FILES=3
    GROQ_TRANSCRIPTION_MODEL=whisper-large-v3-turbo
    GROQ_FALLBACK_TRANSCRIPTION_MODEL=whisper-large-v3
-   GROQ_TRANSCRIPTION_TIMEOUT_MS=10000
+   GROQ_TRANSCRIPTION_TIMEOUT_MS=5000
    GROQ_TRANSCRIPTION_MAX_QUEUE=2
    GROQ_TEXT_MODEL=llama-3.1-8b-instant
    GROQ_TEXT_TIMEOUT_MS=20000

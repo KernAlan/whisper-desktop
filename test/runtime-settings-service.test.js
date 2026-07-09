@@ -18,7 +18,7 @@ function defaults() {
     textModel: "llama-3.1-8b-instant",
     polishChunkWords: 450,
     polishMaxWords: 2500,
-    timeoutMs: 10000,
+    timeoutMs: 5000,
     maxQueue: 2,
     recorderTimesliceMs: 150,
     previewIntervalMs: 1500,
@@ -71,7 +71,10 @@ test("RuntimeSettingsService saves and loads mutable settings", () => {
   assert.equal(loaded.dictationMode, "fast");
   assert.equal(loaded.previewIntervalMs, 2200);
   assert.equal(loaded.timeoutMs, 12000);
-  assert.deepEqual(Object.keys(fs.readJsonSync(filePath)).sort(), Object.keys(pickMutable(saved)).sort());
+  assert.deepEqual(
+    Object.keys(fs.readJsonSync(filePath)).sort(),
+    ["_version", ...Object.keys(pickMutable(saved))].sort()
+  );
 
   fs.removeSync(dir);
 });
@@ -81,7 +84,34 @@ test("applyRuntimeSettings ignores too-low timeout", () => {
     timeoutMs: 999,
   });
 
-  assert.equal(next.timeoutMs, 10000);
+  assert.equal(next.timeoutMs, 5000);
+});
+
+test("RuntimeSettingsService migrates old saved default timeout", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "whisper-settings-"));
+  const filePath = path.join(dir, "settings.json");
+  fs.writeJsonSync(filePath, { timeoutMs: 10000, dictationMode: "fast" });
+  const service = new RuntimeSettingsService({ filePath, defaults: defaults() });
+
+  const loaded = service.loadSync();
+
+  assert.equal(loaded.timeoutMs, 5000);
+  assert.equal(loaded.dictationMode, "fast");
+
+  fs.removeSync(dir);
+});
+
+test("RuntimeSettingsService preserves explicit current-version timeout", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "whisper-settings-"));
+  const filePath = path.join(dir, "settings.json");
+  fs.writeJsonSync(filePath, { _version: 2, timeoutMs: 10000 });
+  const service = new RuntimeSettingsService({ filePath, defaults: defaults() });
+
+  const loaded = service.loadSync();
+
+  assert.equal(loaded.timeoutMs, 10000);
+
+  fs.removeSync(dir);
 });
 
 test("RuntimeSettingsService reset removes saved settings", () => {

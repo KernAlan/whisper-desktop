@@ -39,7 +39,7 @@ function loadConfig(env = process.env) {
       apiKey: env.GROQ_API_KEY || "",
       model: transcriptionModel,
       fallbackModel: fallbackTranscriptionModel,
-      timeoutMs: toMs(env.GROQ_TRANSCRIPTION_TIMEOUT_MS, 10000),
+      timeoutMs: toMs(env.GROQ_TRANSCRIPTION_TIMEOUT_MS, 5000),
       maxQueue: toInt(env.GROQ_TRANSCRIPTION_MAX_QUEUE, 2),
     },
     text: {

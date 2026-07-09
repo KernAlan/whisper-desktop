@@ -18,6 +18,8 @@ const MUTABLE_KEYS = [
   "pasteChunkChars",
   "pasteChunkDelayMs",
 ];
+const SETTINGS_VERSION = 2;
+const LEGACY_DEFAULT_TIMEOUT_MS = 10000;
 
 function createRuntimeDefaults(config) {
   return {
@@ -143,6 +145,13 @@ class RuntimeSettingsService {
       if (!fs.existsSync(this.filePath)) return { ...this.defaults };
       const saved = fs.readJsonSync(this.filePath);
       if (!saved || typeof saved !== "object") return { ...this.defaults };
+      if (
+        !saved._version &&
+        saved.timeoutMs === LEGACY_DEFAULT_TIMEOUT_MS &&
+        this.defaults.timeoutMs < LEGACY_DEFAULT_TIMEOUT_MS
+      ) {
+        saved.timeoutMs = this.defaults.timeoutMs;
+      }
       return applyRuntimeSettings(this.defaults, saved);
     } catch (error) {
       this.logger.warn?.(`[Settings] Failed to load saved settings: ${error.message}`);
@@ -151,7 +160,7 @@ class RuntimeSettingsService {
   }
 
   saveSync(settings) {
-    const payload = pickMutable(settings);
+    const payload = { _version: SETTINGS_VERSION, ...pickMutable(settings) };
     fs.ensureDirSync(require("path").dirname(this.filePath));
     fs.writeJsonSync(this.filePath, payload, { spaces: 2 });
     return payload;

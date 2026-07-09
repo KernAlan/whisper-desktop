@@ -4,6 +4,22 @@ const { promisify } = require("node:util");
 const ks = require("node-key-sender");
 const execFileAsync = promisify(execFile);
 
+const MAC_PASTE_MENU_SCRIPT = `
+tell application "System Events"
+  set frontApp to first application process whose frontmost is true
+  tell frontApp
+    try
+      set pasteItem to menu item "Paste" of menu 1 of menu bar item "Edit" of menu bar 1
+      if enabled of pasteItem then
+        click pasteItem
+        return "pasted"
+      end if
+    end try
+  end tell
+end tell
+error "Paste menu item is not available"
+`;
+
 class TypingService {
   constructor({
     logger,
@@ -11,12 +27,16 @@ class TypingService {
     restoreDelayMs = 120,
     pasteChunkChars = 1500,
     pasteChunkDelayMs = 80,
+    platform = process.platform,
+    execFileRunner = execFileAsync,
   }) {
     this.logger = logger || console;
     this.restoreMode = restoreMode;
     this.restoreDelayMs = restoreDelayMs;
     this.pasteChunkChars = pasteChunkChars;
     this.pasteChunkDelayMs = pasteChunkDelayMs;
+    this.platform = platform;
+    this.execFileAsync = execFileRunner;
   }
 
   setRestoreConfig({ restoreMode, restoreDelayMs }) {
@@ -126,14 +146,14 @@ class TypingService {
   }
 
   async _sendPasteShortcut() {
-    if (process.platform === "darwin") {
-      await execFileAsync("osascript", [
+    if (this.platform === "darwin") {
+      await this.execFileAsync("osascript", [
         "-e",
-        'tell application "System Events" to keystroke "v" using command down',
+        MAC_PASTE_MENU_SCRIPT,
       ]);
-    } else if (process.platform === "win32") {
+    } else if (this.platform === "win32") {
       try {
-        await execFileAsync("powershell.exe", [
+        await this.execFileAsync("powershell.exe", [
           "-NoProfile",
           "-NonInteractive",
           "-Command",
@@ -191,13 +211,13 @@ class TypingService {
       clipboardSnapshot = this._captureClipboardSnapshot();
 
       clipboard.clear();
-      if (process.platform === "darwin") {
-        await execFileAsync("osascript", [
+      if (this.platform === "darwin") {
+        await this.execFileAsync("osascript", [
           "-e",
           'tell application "System Events" to keystroke "c" using command down',
         ]);
-      } else if (process.platform === "win32") {
-        await execFileAsync("powershell.exe", [
+      } else if (this.platform === "win32") {
+        await this.execFileAsync("powershell.exe", [
           "-NoProfile",
           "-NonInteractive",
           "-Command",
@@ -239,4 +259,5 @@ class TypingService {
 
 module.exports = {
   TypingService,
+  MAC_PASTE_MENU_SCRIPT,
 };

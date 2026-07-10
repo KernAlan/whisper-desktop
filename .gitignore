@@ -1,5 +1,6 @@
 .env
 node_modules/
+dist/
 logs/
 app.pid
 run.out.log

@@ -470,7 +470,7 @@ class ConsoleService {
     }
     this._sendLine("");
     for (const entry of entries) {
-      const text = require("fs").readFileSync(entry.path, "utf8");
+      const text = entry.text || "";
       const date = entry.modified.toLocaleTimeString();
       this._sendLine(`  [${date}] (${text.length} chars, saved)`);
       this._sendLine(`  ${text}`);

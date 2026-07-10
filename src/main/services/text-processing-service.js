@@ -10,14 +10,19 @@ function withTimeout(promise, timeoutMs, message) {
 
 class TextProcessingService {
   constructor({ apiKey, model, timeoutMs, polishChunkWords, polishMaxWords, dictionaryService, logger }) {
-    this.apiKey = apiKey;
+    this.apiKey = String(apiKey || "").trim();
     this.model = model;
     this.timeoutMs = timeoutMs;
     this.polishChunkWords = Number.isFinite(polishChunkWords) ? polishChunkWords : 450;
     this.polishMaxWords = Number.isFinite(polishMaxWords) ? polishMaxWords : 2500;
     this.dictionaryService = dictionaryService;
     this.logger = logger || console;
-    this.groq = new Groq({ apiKey });
+    this.groq = this.apiKey ? new Groq({ apiKey: this.apiKey }) : null;
+  }
+
+  setApiKey(apiKey) {
+    this.apiKey = String(apiKey || "").trim();
+    this.groq = this.apiKey ? new Groq({ apiKey: this.apiKey }) : null;
   }
 
   setModel(model) {
@@ -36,7 +41,7 @@ class TextProcessingService {
   }
 
   async applyCommand({ selectedText, instruction }) {
-    if (!this.apiKey) throw new Error("Missing GROQ_API_KEY in environment");
+    if (!this.apiKey) throw new Error("Groq API key is not configured. Open Settings to connect.");
     const cleanInstruction = String(instruction || "").trim();
     if (!cleanInstruction) throw new Error("No command instruction captured.");
 
@@ -74,7 +79,7 @@ class TextProcessingService {
   }
 
   async polishDictation({ transcript }) {
-    if (!this.apiKey) throw new Error("Missing GROQ_API_KEY in environment");
+    if (!this.apiKey) throw new Error("Groq API key is not configured. Open Settings to connect.");
     const rawText = String(transcript || "").trim();
     if (!rawText) return "";
 

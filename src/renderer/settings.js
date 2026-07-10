@@ -49,8 +49,31 @@ function renderConfig(nextConfig) {
     }
   });
   setDictationMode(config.dictationMode);
+  renderCredentialStatus(config.credential);
   renderTerms(config.dictionaryTerms || []);
   setStatus("Loaded", "ok");
+}
+
+function renderCredentialStatus(credential = {}) {
+  const status = byId("credentialStatus");
+  const hint = byId("credentialHint");
+  const saveButton = byId("saveApiKey");
+  const clearButton = byId("clearApiKey");
+  const configured = Boolean(credential.configured);
+  const source = credential.source === "environment" ? "environment" : "secure storage";
+
+  status.textContent = configured ? `Connected via ${source}` : "Not configured";
+  status.classList.toggle("connected", configured);
+  saveButton.disabled = credential.secureStorageAvailable === false;
+  clearButton.disabled = !configured || credential.source !== "secure storage";
+
+  if (credential.secureStorageAvailable === false) {
+    hint.textContent = "Secure credential storage is unavailable. Set GROQ_API_KEY in the environment.";
+    hint.className = "hint error";
+  } else {
+    hint.textContent = "Keys are encrypted with the operating system credential store.";
+    hint.className = "hint";
+  }
 }
 
 function renderTerms(terms) {
@@ -167,6 +190,35 @@ async function resetSettings() {
   }
 }
 
+async function saveApiKey() {
+  const input = byId("apiKey");
+  const apiKey = input.value.trim();
+  if (!apiKey) {
+    setStatus("Enter an API key", "error");
+    input.focus();
+    return;
+  }
+
+  try {
+    setStatus("Saving key");
+    renderCredentialStatus(await window.electronAPI.saveApiKey(apiKey));
+    input.value = "";
+    setStatus("Speech service connected", "ok");
+  } catch (error) {
+    setStatus(error.message || "Key save failed", "error");
+  }
+}
+
+async function clearApiKey() {
+  try {
+    renderCredentialStatus(await window.electronAPI.clearApiKey());
+    byId("apiKey").value = "";
+    setStatus("Saved key cleared", "ok");
+  } catch (error) {
+    setStatus(error.message || "Key clear failed", "error");
+  }
+}
+
 async function addTerm() {
   const input = byId("dictionaryTerm");
   const term = input.value.trim();
@@ -255,6 +307,11 @@ byId("addTerm").addEventListener("click", addTerm);
 byId("suggestTerms").addEventListener("click", suggestTerms);
 byId("addSuggestions").addEventListener("click", addSuggestions);
 byId("testMic").addEventListener("click", testMic);
+byId("saveApiKey").addEventListener("click", saveApiKey);
+byId("clearApiKey").addEventListener("click", clearApiKey);
+byId("apiKey").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") saveApiKey();
+});
 byId("dictionaryTerm").addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     addTerm();

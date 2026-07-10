@@ -208,3 +208,56 @@ test("chunked recovery retries a saved session in order", async () => {
 
   fs.removeSync(recoveryDir);
 });
+
+test("recovery pruning enforces a byte quota while retaining the newest session", async () => {
+  const recoveryDir = fs.mkdtempSync(path.join(os.tmpdir(), "whisper-recovery-"));
+  const service = new TranscriptionService({
+    apiKey: "test-key",
+    model: "whisper-large-v3-turbo",
+    fallbackModel: "whisper-large-v3",
+    timeoutMs: 1000,
+    maxQueue: 2,
+    recoveryDir,
+    maxRecoveryBytes: 32,
+    logger: { log() {}, warn() {}, error() {} },
+  });
+  const oldPath = path.join(recoveryDir, "recording-old.webm");
+  const newPath = path.join(recoveryDir, "recording-new.webm");
+  fs.writeFileSync(oldPath, Buffer.alloc(24));
+  fs.writeFileSync(newPath, Buffer.alloc(24));
+  const oldTime = new Date(Date.now() - 10000);
+  fs.utimesSync(oldPath, oldTime, oldTime);
+
+  await service.pruneRecovery();
+
+  assert.equal(fs.existsSync(oldPath), false);
+  assert.equal(fs.existsSync(newPath), true);
+  fs.removeSync(recoveryDir);
+});
+
+test("recovery pruning removes expired sessions but keeps the newest session", async () => {
+  const recoveryDir = fs.mkdtempSync(path.join(os.tmpdir(), "whisper-recovery-"));
+  const service = new TranscriptionService({
+    apiKey: "test-key",
+    model: "whisper-large-v3-turbo",
+    fallbackModel: "whisper-large-v3",
+    timeoutMs: 1000,
+    maxQueue: 2,
+    recoveryDir,
+    maxRecoveryAgeMs: 100,
+    logger: { log() {}, warn() {}, error() {} },
+  });
+  const oldPath = path.join(recoveryDir, "recording-old.webm");
+  const newPath = path.join(recoveryDir, "recording-new.webm");
+  fs.writeFileSync(oldPath, Buffer.alloc(8));
+  const oldTime = new Date(Date.now() - 10000);
+  fs.utimesSync(oldPath, oldTime, oldTime);
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  fs.writeFileSync(newPath, Buffer.alloc(8));
+
+  await service.pruneRecovery();
+
+  assert.equal(fs.existsSync(oldPath), false);
+  assert.equal(fs.existsSync(newPath), true);
+  fs.removeSync(recoveryDir);
+});

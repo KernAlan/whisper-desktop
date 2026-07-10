@@ -4,6 +4,8 @@ const path = require("path");
 const Groq = require("groq-sdk");
 
 const MAX_RECOVERY_SESSIONS = 10;
+const MAX_RECOVERY_BYTES = 250 * 1024 * 1024;
+const MAX_RECOVERY_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const PREVIEW_TIMEOUT_MS = 8000;
 const PREVIEW_WARNING_THROTTLE_MS = 30000;
 
@@ -36,8 +38,11 @@ class TranscriptionService {
     logger,
     onMetric,
     recoveryDir,
+    maxRecoverySessions = MAX_RECOVERY_SESSIONS,
+    maxRecoveryBytes = MAX_RECOVERY_BYTES,
+    maxRecoveryAgeMs = MAX_RECOVERY_AGE_MS,
   }) {
-    this.apiKey = apiKey;
+    this.apiKey = String(apiKey || "").trim();
     this.model = model;
     this.fallbackModel = fallbackModel;
     this.timeoutMs = timeoutMs;
@@ -45,7 +50,7 @@ class TranscriptionService {
     this.dictionaryService = dictionaryService;
     this.logger = logger || console;
     this.onMetric = typeof onMetric === "function" ? onMetric : () => {};
-    this.groq = new Groq({ apiKey });
+    this.groq = this.apiKey ? new Groq({ apiKey: this.apiKey }) : null;
     this.active = false;
     this.previewActive = false;
     this.previewAbortController = null;
@@ -54,6 +59,14 @@ class TranscriptionService {
     this.lastPreviewWarningMessage = "";
     this.queue = [];
     this.recoveryDir = recoveryDir || path.join(os.tmpdir(), "whisper-desktop-recovery");
+    this.maxRecoverySessions = maxRecoverySessions;
+    this.maxRecoveryBytes = maxRecoveryBytes;
+    this.maxRecoveryAgeMs = maxRecoveryAgeMs;
+  }
+
+  setApiKey(apiKey) {
+    this.apiKey = String(apiKey || "").trim();
+    this.groq = this.apiKey ? new Groq({ apiKey: this.apiKey }) : null;
   }
 
   setModels({ model, fallbackModel }) {
@@ -206,7 +219,7 @@ class TranscriptionService {
   }
 
   async _transcribeOne(tempFilePath, options = {}) {
-    if (!this.apiKey) throw new Error("Missing GROQ_API_KEY in environment");
+    if (!this.apiKey) throw new Error("Groq API key is not configured. Open Settings to connect.");
 
     let usedModel = this.model;
     const timeoutMs = Number(options.timeoutMs || this.timeoutMs);
@@ -305,34 +318,22 @@ class TranscriptionService {
 
   async _pruneRecovery() {
     try {
-      const files = await fs.readdir(this.recoveryDir);
-      const entries = await Promise.all(
-        files.map(async (name) => {
-          const fullPath = path.join(this.recoveryDir, name);
-          const stat = await fs.stat(fullPath).catch(() => null);
-          return stat ? {
-            name,
-            fullPath,
-            mtimeMs: stat.mtimeMs,
-            ...this._parseRecoveryName(name),
-          } : null;
-        })
-      );
+      const groups = await this._listRecoveryGroups();
+      let keptSessions = 0;
+      let keptBytes = 0;
+      const newestKey = groups[0]?.key;
+      const now = Date.now();
 
-      const groups = new Map();
-      for (const entry of entries.filter(Boolean)) {
-        const key = entry.sessionId || entry.name;
-        const group = groups.get(key) || { key, entries: [], mtimeMs: 0 };
-        group.entries.push(entry);
-        group.mtimeMs = Math.max(group.mtimeMs, entry.mtimeMs);
-        groups.set(key, group);
-      }
-
-      if (groups.size <= MAX_RECOVERY_SESSIONS) return;
-
-      const sorted = Array.from(groups.values()).sort((a, b) => a.mtimeMs - b.mtimeMs);
-      const toDelete = sorted.slice(0, sorted.length - MAX_RECOVERY_SESSIONS);
-      for (const group of toDelete) {
+      for (const group of groups) {
+        const expired = this.maxRecoveryAgeMs > 0 && now - group.mtimeMs > this.maxRecoveryAgeMs;
+        const exceedsSessions = keptSessions >= this.maxRecoverySessions;
+        const exceedsBytes = keptBytes + group.size > this.maxRecoveryBytes;
+        const keepNewest = group.key === newestKey;
+        if (keepNewest || (!expired && !exceedsSessions && !exceedsBytes)) {
+          keptSessions += 1;
+          keptBytes += group.size;
+          continue;
+        }
         for (const entry of group.entries) {
           await fs.unlink(entry.fullPath).catch(() => {});
           this.logger.log(`[Recovery] Pruned old file: ${entry.name}`);
@@ -341,6 +342,39 @@ class TranscriptionService {
     } catch (err) {
       this.logger.error("[Recovery] Prune error:", err.message);
     }
+  }
+
+  async pruneRecovery() {
+    await this._pruneRecovery();
+  }
+
+  async _listRecoveryGroups() {
+    await fs.ensureDir(this.recoveryDir);
+    const files = await fs.readdir(this.recoveryDir);
+    const entries = await Promise.all(
+      files.map(async (name) => {
+        const fullPath = path.join(this.recoveryDir, name);
+        const stat = await fs.stat(fullPath).catch(() => null);
+        return stat ? {
+          name,
+          fullPath,
+          mtimeMs: stat.mtimeMs,
+          size: stat.size,
+          ...this._parseRecoveryName(name),
+        } : null;
+      })
+    );
+
+    const groups = new Map();
+    for (const entry of entries.filter(Boolean)) {
+      const key = entry.sessionId || entry.name;
+      const group = groups.get(key) || { key, entries: [], mtimeMs: 0, size: 0 };
+      group.entries.push(entry);
+      group.mtimeMs = Math.max(group.mtimeMs, entry.mtimeMs);
+      group.size += entry.size;
+      groups.set(key, group);
+    }
+    return Array.from(groups.values()).sort((a, b) => b.mtimeMs - a.mtimeMs);
   }
 
   async listRecoveryFiles() {
@@ -535,5 +569,8 @@ class TranscriptionService {
 }
 
 module.exports = {
+  MAX_RECOVERY_AGE_MS,
+  MAX_RECOVERY_BYTES,
+  MAX_RECOVERY_SESSIONS,
   TranscriptionService,
 };

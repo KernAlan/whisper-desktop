@@ -16,11 +16,14 @@ Tl;dr With the magic that is Whisper and the speed of the Groq servers, I though
 - Transcription using Groq Whisper models (fast default with fallback)
 - Optional polished dictation using a text model for punctuation, capitalization, and formatting
 - Local custom dictionary to bias transcription toward your names and jargon
-- Automatic insertion of transcribed text into the active text input field
+- Target-aware insertion of transcribed text into the field that started dictation
+- Reversible recent insertion with an **Undo Last Insert** recovery action
+- Clipboard restoration by default, with an opt-out for keeping generated text on the clipboard
 - Audio recovery — failed recordings are saved instead of deleted
 - Chunked transcription — large recordings (>20MB) are auto-split to stay under the API size limit
 - Terminal CLI for runtime configuration and diagnostics
 - Settings window for hotkeys, modes, models, dictionary terms, and long-text tuning
+- Encrypted in-app Groq API key setup using the operating system credential store
 - Saved settings so runtime tweaks survive restarts
 - One-shot CLI commands for scripting and automation
 
@@ -39,7 +42,11 @@ Tl;dr With the magic that is Whisper and the speed of the Groq servers, I though
    npm install
    ```
 
-3. Create a `.env` file in the root directory and add your Groq API key:
+3. Start the application, open **Settings**, and enter your Groq API key under **Speech Service**. The key is encrypted with the operating system credential store and is never displayed again.
+
+   You can obtain a key from [Groq Console](https://console.groq.com/keys).
+
+   For development or managed environments, you can instead create a `.env` file and set `GROQ_API_KEY`:
    ```
    GROQ_API_KEY=your_api_key_here
    # Optional (defaults shown)
@@ -56,6 +63,7 @@ Tl;dr With the magic that is Whisper and the speed of the Groq servers, I though
    APP_CLIPBOARD_RESTORE_DELAY_MS=120
    APP_LOG_FILE=logs/app.log
    APP_LOG_MAX_FILES=3
+   APP_LOG_MAX_BYTES=2097152
    GROQ_TRANSCRIPTION_MODEL=whisper-large-v3-turbo
    GROQ_FALLBACK_TRANSCRIPTION_MODEL=whisper-large-v3
    GROQ_TRANSCRIPTION_TIMEOUT_MS=5000
@@ -65,8 +73,6 @@ Tl;dr With the magic that is Whisper and the speed of the Groq servers, I though
    GROQ_POLISH_CHUNK_WORDS=450
    GROQ_POLISH_MAX_WORDS=2500
    ```
-
-   To obtain your Groq API key, visit [https://console.groq.com/keys](https://console.groq.com/keys).
 
 ## Usage
 
@@ -86,6 +92,7 @@ By default, dictation is lightly polished before paste. It should preserve conte
 Long dictations are handled conservatively: polishing runs in text chunks up to `GROQ_POLISH_CHUNK_WORDS`, and recordings over `GROQ_POLISH_MAX_WORDS` skip polishing and paste the raw transcript.
 
 Long inserts are pasted in chunks too. The app preserves your clipboard once, pastes each chunk, then restores the clipboard after the full insert.
+Set `APP_CLIPBOARD_RESTORE_MODE=off` when you prefer the inserted text to remain on the clipboard for follow-up use.
 
 ### Trying It Locally
 
@@ -105,6 +112,8 @@ Open settings from the terminal if you want to change the main runtime options w
 ```
 node cli.js settings
 ```
+
+The settings window is also where you connect or replace the Groq API key. A securely saved key takes precedence over `GROQ_API_KEY`; clearing it returns to the environment key when one is present.
 
 Settings changed from the window or CLI are saved locally and loaded next time. The `.env` file is still the default source, and `reset settings` goes back to those defaults.
 
@@ -194,7 +203,7 @@ This works from scripts, Stream Deck buttons, or any automation tool.
 
 If a transcription fails (network error, timeout, API limit), the audio is saved to a recovery folder instead of being deleted. The app retries the saved audio automatically. If that still fails, the overlay stays open with a retry button. If there is partial text, it is copied to your clipboard and you can copy it again from the overlay.
 
-Recordings over 20MB are saved as one chunked recovery session, so retry works on the whole recording without stitching files together.
+Recordings over 20MB are saved as one chunked recovery session, so retry works on the whole recording without stitching files together. Failed audio is bounded by session count, age, and total bytes; successful audio is not retained by default.
 
 To list and retry saved recordings:
 
@@ -232,10 +241,10 @@ On startup, the terminal shows the current configuration. During usage it logs:
    sudo apt-get install libasound2-dev
    ```
 
-- If you encounter issues with global shortcuts, you may need to install `libxtst-dev`:
+- Install `xdotool` for selection capture and text insertion:
 
    ```
-   sudo apt-get install libxtst-dev
+   sudo apt-get install xdotool
    ```
 
 ## Development
@@ -247,6 +256,7 @@ The main components of the application are:
 - `src/main/main.js`: Main process orchestration + IPC wiring
 - `src/main/services/console-service.js`: Named pipe server for CLI commands
 - `src/main/services/runtime-settings-service.js`: saved runtime settings
+- `src/main/services/credential-service.js`: encrypted Groq API key persistence
 - `src/main/services/transcription-service.js`: queue/timeout/fallback transcription pipeline
 - `src/main/services/text-processing-service.js`: command-mode rewrite pipeline
 - `src/main/services/dictionary-service.js`: persistent custom dictionary

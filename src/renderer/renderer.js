@@ -147,6 +147,7 @@ function updateRecoveryActions(payload = null) {
   const testMic = document.getElementById("testMic");
   const pastePartial = document.getElementById("pastePartial");
   const retryPaste = document.getElementById("retryPaste");
+  const undoLastInsert = document.getElementById("undoLastInsert");
   const copyOutput = document.getElementById("copyOutput");
   const showHistory = document.getElementById("showHistory");
   const openSettings = document.getElementById("openSettings");
@@ -163,6 +164,7 @@ function updateRecoveryActions(payload = null) {
   if (retryMic) retryMic.style.display = !processing && payload?.retryMic ? "inline-block" : "none";
   if (testMic) testMic.style.display = !processing && payload?.testMic ? "inline-block" : "none";
   if (retryPaste) retryPaste.style.display = !processing && payload?.retryPaste ? "inline-block" : "none";
+  if (undoLastInsert) undoLastInsert.style.display = !processing && payload?.undo ? "inline-block" : "none";
   if (copyOutput) copyOutput.style.display = !processing && payload?.copyOutput ? "inline-block" : "none";
   if (showHistory) showHistory.style.display = !processing && payload?.history !== false ? "inline-block" : "none";
   if (openSettings) openSettings.style.display = !processing && payload?.settings ? "inline-block" : "none";
@@ -345,7 +347,8 @@ async function boot() {
     listTranscripts: (limit) => window.electronAPI.listTranscripts(limit),
     polishDictation: (payload) => window.electronAPI.polishDictation(payload),
     processCommand: (payload) => window.electronAPI.processCommand(payload),
-    simulateTyping: (text) => window.electronAPI.simulateTyping(text),
+    simulateTyping: (text, options) => window.electronAPI.simulateTyping(text, options),
+    undoLastInsertion: () => window.electronAPI.undoLastInsertion(),
     copyText: (text) => window.electronAPI.copyText(text),
     updateStatus,
     updatePreview,
@@ -420,6 +423,10 @@ async function boot() {
     });
   });
 
+  window.electronAPI.onTargetContextCaptured?.((payload = {}) => {
+    controller.setTargetContext(payload.targetCaptureId, payload.targetContext);
+  });
+
   document.getElementById("retryRecovery")?.addEventListener("click", () => {
     controller.retrySavedRecovery().catch((error) => {
       console.error("Manual recovery retry failed:", error);
@@ -464,6 +471,13 @@ async function boot() {
     controller.retryLastPaste().catch((error) => {
       console.error(`Retry paste failed: ${formatError(error)}`);
       updateStatus("Retry paste failed", "red");
+    });
+  });
+
+  document.getElementById("undoLastInsert")?.addEventListener("click", () => {
+    controller.undoLastInsertion().catch((error) => {
+      console.error(`Undo failed: ${formatError(error)}`);
+      updateStatus("Undo failed", "red");
     });
   });
 

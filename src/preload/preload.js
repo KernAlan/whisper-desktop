@@ -4,6 +4,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
   onToggleRecording: (callback) => {
     ipcRenderer.on("toggle-recording", (_event, payload) => callback(payload));
   },
+  onTargetContextCaptured: (callback) => {
+    ipcRenderer.on("target-context-captured", (_event, payload) => callback(payload));
+  },
   transcribeAudio: (arrayBuffer) => ipcRenderer.invoke("transcribe-audio", arrayBuffer),
   transcribePreview: (arrayBuffer) => ipcRenderer.invoke("transcribe-preview", arrayBuffer),
   transcribeAudioChunked: (arrayBuffers) => ipcRenderer.invoke("transcribe-audio-chunked", arrayBuffers),
@@ -17,8 +20,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
   openSettings: () => ipcRenderer.invoke("open-settings"),
   scheduleHideWindow: (delayMs) => ipcRenderer.invoke("schedule-hide-window", delayMs),
   cancelHideWindow: () => ipcRenderer.invoke("cancel-hide-window"),
-  simulateTyping: (text) => ipcRenderer.invoke("simulate-typing", text),
-  captureSelectedText: () => ipcRenderer.invoke("capture-selected-text"),
+  simulateTyping: (text, options = {}) => ipcRenderer.invoke("simulate-typing", { text, ...options }),
+  undoLastInsertion: () => ipcRenderer.invoke("undo-last-insertion"),
+  captureSelectedText: (targetContext) => ipcRenderer.invoke("capture-selected-text", targetContext),
   processCommand: (payload) => ipcRenderer.invoke("process-command", payload),
   polishDictation: (payload) => ipcRenderer.invoke("polish-dictation", payload),
   requestMicrophoneAccess: () =>
@@ -26,6 +30,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getRuntimeConfig: () => ipcRenderer.invoke("get-runtime-config"),
   updateRuntimeSettings: (settings) => ipcRenderer.invoke("update-runtime-settings", settings),
   resetRuntimeSettings: () => ipcRenderer.invoke("reset-runtime-settings"),
+  saveApiKey: (apiKey) => ipcRenderer.invoke("save-api-key", apiKey),
+  clearApiKey: () => ipcRenderer.invoke("clear-api-key"),
   onRuntimeConfigUpdated: (callback) => {
     ipcRenderer.on("runtime-config-updated", (_event, payload) => callback(payload));
   },

@@ -211,6 +211,28 @@ test("RecorderController initialize selects device without requesting or opening
   assert.equal(ensureStreamCalls, 0);
 });
 
+test("RecorderController waits for the matching asynchronous target context", async () => {
+  const { RecorderController } = await import("../src/renderer/core/recorder-controller.js");
+  const controller = new RecorderController(createControllerDeps());
+  controller.targetCaptureId = "capture-1";
+  controller.targetContextPending = true;
+
+  const waiting = controller._waitForTargetContext(100);
+  assert.equal(controller.setTargetContext("stale-capture", { available: true }), false);
+  setTimeout(() => {
+    controller.setTargetContext("capture-1", {
+      available: true,
+      platform: "win32",
+      windowId: "42",
+      appName: "editor",
+    });
+  }, 10);
+
+  const context = await waiting;
+  assert.equal(context.appName, "editor");
+  assert.equal(controller.targetContextPending, false);
+});
+
 test("RecorderController releases mic when a recording stops", async () => {
   const { RecorderController, STATES } = await import("../src/renderer/core/recorder-controller.js");
   const previousMediaRecorder = globalThis.MediaRecorder;

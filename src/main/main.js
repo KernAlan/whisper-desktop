@@ -5,9 +5,11 @@ const {
   ipcMain,
   globalShortcut,
   powerMonitor,
+  safeStorage,
   systemPreferences,
 } = require("electron");
 const path = require("path");
+const { randomUUID } = require("node:crypto");
 const { loadConfig, validateConfig } = require("../shared/config");
 const { WindowManager } = require("./ui/window-manager");
 const { TranscriptionService } = require("./services/transcription-service");
@@ -18,6 +20,8 @@ const { Logger } = require("./services/logger");
 const { ConsoleService } = require("./services/console-service");
 const { DictionaryService } = require("./services/dictionary-service");
 const { TextProcessingService } = require("./services/text-processing-service");
+const { CredentialService } = require("./services/credential-service");
+const { TargetContextService } = require("./services/target-context-service");
 const {
   RuntimeSettingsService,
   createRuntimeDefaults,
@@ -30,7 +34,6 @@ const config = loadConfig();
 const recoveryDir = path.join(app.getPath("userData"), "recovery");
 const transcriptDir = path.join(app.getPath("userData"), "transcripts");
 const dictionaryPath = path.join(app.getPath("userData"), "dictionary.json");
-const configIssues = validateConfig(config);
 const logger = new Logger({
   logFilePath: process.env.APP_LOG_FILE || path.join(process.cwd(), "logs", "app.log"),
 });
@@ -53,12 +56,22 @@ const shortcutRegistration = {
 };
 const HOTKEY_DOUBLE_TAP_MS = 450;
 let lastDictationHotkeyAt = 0;
+let lastInsertion = null;
+const UNDO_WINDOW_MS = 60 * 1000;
 const transcriptStore = new TranscriptStore({ dir: transcriptDir, logger });
 const diagnostics = new DiagnosticsService(config, logger, { transcriptStore });
 const windowManager = new WindowManager({ hideWindowMs: config.app.hideWindowMs });
 const dictionaryService = new DictionaryService({ filePath: dictionaryPath, logger });
+const credentialService = new CredentialService({
+  filePath: path.join(app.getPath("userData"), "credentials.json"),
+  safeStorage,
+  logger,
+});
+const targetContextService = new TargetContextService({ logger });
+let activeApiKey = config.transcription.apiKey;
+let apiKeySource = activeApiKey ? "environment" : "missing";
 const transcriptionService = new TranscriptionService({
-  apiKey: config.transcription.apiKey,
+  apiKey: activeApiKey,
   model: runtimeSettings.model,
   fallbackModel: runtimeSettings.fallbackModel,
   timeoutMs: runtimeSettings.timeoutMs,
@@ -74,9 +87,10 @@ const typingService = new TypingService({
   restoreDelayMs: runtimeSettings.clipboardRestoreDelayMs,
   pasteChunkChars: runtimeSettings.pasteChunkChars,
   pasteChunkDelayMs: runtimeSettings.pasteChunkDelayMs,
+  targetContextService,
 });
 const textProcessingService = new TextProcessingService({
-  apiKey: config.text.apiKey,
+  apiKey: activeApiKey,
   model: runtimeSettings.textModel,
   timeoutMs: config.text.timeoutMs,
   polishChunkWords: runtimeSettings.polishChunkWords,
@@ -112,10 +126,14 @@ function setupShortcut() {
   shortcutRegistration.registeredShortcut = "";
   shortcutRegistration.registeredCommandShortcut = "";
 
-  const dictationHandler = () => {
+  const dictationHandler = async () => {
     const now = Date.now();
     const showRecovery = now - lastDictationHotkeyAt <= HOTKEY_DOUBLE_TAP_MS;
     lastDictationHotkeyAt = now;
+    const targetCaptureId = showRecovery ? "" : randomUUID();
+    const targetCapturePromise = showRecovery
+      ? Promise.resolve(null)
+      : targetContextService.capture();
     windowManager.showWindow({ autoHide: false });
     const windows = BrowserWindow.getAllWindows();
     windows.forEach((window) =>
@@ -123,8 +141,31 @@ function setupShortcut() {
         mode: "dictation",
         dictationMode: runtimeSettings.dictationMode,
         showRecovery,
+        targetContext: null,
+        targetCaptureId,
       })
     );
+
+    if (!showRecovery) {
+      targetCapturePromise
+        .then((targetContext) => {
+          BrowserWindow.getAllWindows().forEach((window) => {
+            window.webContents.send("target-context-captured", {
+              targetCaptureId,
+              targetContext,
+            });
+          });
+        })
+        .catch((error) => {
+          logger.warn(`[Target] Async capture failed: ${error?.message || error}`);
+          BrowserWindow.getAllWindows().forEach((window) => {
+            window.webContents.send("target-context-captured", {
+              targetCaptureId,
+              targetContext: null,
+            });
+          });
+        });
+    }
   };
 
   const dictationOk = globalShortcut.register(runtimeSettings.shortcut, dictationHandler);
@@ -139,7 +180,8 @@ function setupShortcut() {
     shortcutRegistration.commandShortcutOk = true;
   } else {
     const commandHandler = async () => {
-      const selection = await typingService.captureSelectedText();
+      const targetContext = await targetContextService.capture();
+      const selection = await typingService.captureSelectedText({ targetContext });
       windowManager.showWindow({ autoHide: false });
       const windows = BrowserWindow.getAllWindows();
       windows.forEach((window) =>
@@ -147,6 +189,7 @@ function setupShortcut() {
           mode: "command",
           selectedText: selection.text,
           selection,
+          targetContext,
         })
       );
     };
@@ -212,6 +255,30 @@ function syncRuntimeServices() {
     polishChunkWords: runtimeSettings.polishChunkWords,
     polishMaxWords: runtimeSettings.polishMaxWords,
   });
+}
+
+function setActiveApiKey(apiKey, source) {
+  activeApiKey = String(apiKey || "").trim();
+  apiKeySource = activeApiKey ? source : "missing";
+  transcriptionService.setApiKey(activeApiKey);
+  textProcessingService.setApiKey(activeApiKey);
+  diagnostics.setApiKeyConfigured(activeApiKey);
+}
+
+function getCurrentConfigIssues() {
+  return validateConfig({
+    ...config,
+    transcription: { ...config.transcription, apiKey: activeApiKey },
+    text: { ...config.text, apiKey: activeApiKey },
+  });
+}
+
+function getCredentialStatus() {
+  return {
+    configured: Boolean(activeApiKey),
+    source: apiKeySource,
+    secureStorageAvailable: credentialService.isEncryptionAvailable(),
+  };
 }
 
 function applySettings(payload, { persist = true } = {}) {
@@ -296,8 +363,9 @@ function getRuntimeConfigPayload() {
     pasteChunkChars: runtimeSettings.pasteChunkChars,
     pasteChunkDelayMs: runtimeSettings.pasteChunkDelayMs,
     dictionaryTerms: dictionaryService.list(),
-    apiKeyOk: Boolean(config.transcription.apiKey),
-    configIssues,
+    apiKeyOk: Boolean(activeApiKey),
+    credential: getCredentialStatus(),
+    configIssues: getCurrentConfigIssues(),
   };
 }
 
@@ -344,12 +412,15 @@ async function checkAndRequestMicrophonePermission() {
 }
 
 app.on("ready", async () => {
+  const savedApiKey = credentialService.loadApiKey();
+  if (savedApiKey) setActiveApiKey(savedApiKey, "secure storage");
   diagnostics.printStartup({
     logFilePath: logger.getCurrentLogPath(),
     appVersion: app.getVersion(),
   });
-  if (configIssues.length) {
-    configIssues.forEach((issue) => logger.warn(`[Config] ${issue}`));
+  const currentConfigIssues = getCurrentConfigIssues();
+  if (currentConfigIssues.length) {
+    currentConfigIssues.forEach((issue) => logger.warn(`[Config] ${issue}`));
   }
 
   app.setLoginItemSettings({
@@ -358,6 +429,7 @@ app.on("ready", async () => {
   });
 
   await dictionaryService.load();
+  await transcriptionService.pruneRecovery();
   createAndWireMainWindow();
   consoleService.start();
   powerMonitor.on("resume", () => {
@@ -446,14 +518,17 @@ ipcMain.handle("copy-text", async (_event, text) => {
 
 ipcMain.handle("list-transcripts", async (_event, limit) => {
   const entries = await transcriptStore.list(Number(limit) || 5);
-  return Promise.all(entries.map(async (entry) => {
-    const text = require("fs").readFileSync(entry.path, "utf8");
-    return {
-      name: entry.name,
-      text,
-      chars: text.length,
-      modified: entry.modified,
-    };
+  return entries.map((entry) => ({
+    id: entry.id,
+    name: entry.name,
+    text: entry.text,
+    rawText: entry.rawText,
+    chars: entry.text.length,
+    modified: entry.modified,
+    mode: entry.mode,
+    target: entry.target,
+    paste: entry.paste,
+    undone: entry.undone,
   }));
 });
 
@@ -464,7 +539,9 @@ ipcMain.handle("copy-latest-transcript", async () => {
   return { ok: true, chars: entry.text.length };
 });
 
-ipcMain.handle("simulate-typing", async (event, text) => {
+ipcMain.handle("simulate-typing", async (event, payload) => {
+  const text = payload && typeof payload === "object" ? payload.text : payload;
+  const targetContext = payload && typeof payload === "object" ? payload.targetContext : undefined;
   if (process.platform === "darwin") {
     try {
       const trusted = systemPreferences.isTrustedAccessibilityClient(true);
@@ -480,13 +557,51 @@ ipcMain.handle("simulate-typing", async (event, text) => {
     }
   }
 
-  return typingService.pasteText(text, {
+  const result = await typingService.pasteText(text, {
+    targetContext,
     onProgress: (progress) => event.sender.send("typing-progress", progress),
   });
+  if (result?.ok && targetContext?.available) {
+    const transactionId = randomUUID();
+    lastInsertion = {
+      id: transactionId,
+      targetContext,
+      createdAt: Date.now(),
+      undone: false,
+    };
+    return { ...result, transactionId };
+  }
+  return result;
 });
 
-ipcMain.handle("capture-selected-text", async () => {
-  return typingService.captureSelectedText();
+ipcMain.handle("undo-last-insertion", async () => {
+  if (!lastInsertion || lastInsertion.undone) {
+    return { ok: false, error: "No recent insertion is available to undo." };
+  }
+  if (Date.now() - lastInsertion.createdAt > UNDO_WINDOW_MS) {
+    return { ok: false, error: "The undo window has expired." };
+  }
+  if (process.platform === "darwin") {
+    try {
+      if (!systemPreferences.isTrustedAccessibilityClient(true)) {
+        return { ok: false, error: "accessibility-not-trusted" };
+      }
+    } catch (error) {
+      logger.error("Failed to check accessibility permission for undo:", error);
+    }
+  }
+  try {
+    await targetContextService.sendUndo(lastInsertion.targetContext);
+    lastInsertion.undone = true;
+    await transcriptStore.markUndone(lastInsertion.id);
+    return { ok: true, transactionId: lastInsertion.id };
+  } catch (error) {
+    return { ok: false, error: error?.message || "Undo failed" };
+  }
+});
+
+ipcMain.handle("capture-selected-text", async (_event, targetContext) => {
+  return typingService.captureSelectedText({ targetContext });
 });
 
 ipcMain.handle("process-command", async (_event, payload) => {
@@ -542,6 +657,22 @@ ipcMain.handle("reset-runtime-settings", async () => {
   resetSettings();
   setupShortcut();
   return broadcastRuntimeConfig();
+});
+
+ipcMain.handle("save-api-key", async (_event, apiKey) => {
+  const savedApiKey = credentialService.saveApiKey(apiKey);
+  setActiveApiKey(savedApiKey, "secure storage");
+  logger.log("[Credentials] Groq API key saved to secure storage.");
+  broadcastRuntimeConfig();
+  return getCredentialStatus();
+});
+
+ipcMain.handle("clear-api-key", async () => {
+  credentialService.clearApiKey();
+  setActiveApiKey(config.transcription.apiKey, config.transcription.apiKey ? "environment" : "missing");
+  logger.log("[Credentials] Saved Groq API key cleared.");
+  broadcastRuntimeConfig();
+  return getCredentialStatus();
 });
 
 ipcMain.handle("dictionary-list", async () => {

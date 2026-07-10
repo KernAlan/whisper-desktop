@@ -1,10 +1,25 @@
 const fs = require("fs-extra");
 const path = require("path");
 
+const DEFAULT_MAX_FILES = 3;
+const DEFAULT_MAX_BYTES = 2 * 1024 * 1024;
+
 class Logger {
-  constructor({ logFilePath }) {
+  constructor({ logFilePath, maxFiles, maxBytes } = {}) {
     this.logFilePath = logFilePath || path.join(process.cwd(), "logs", "app.log");
-    this.maxFiles = Number.parseInt(process.env.APP_LOG_MAX_FILES || "", 10) || 3;
+    const configuredMaxFiles = Number.parseInt(process.env.APP_LOG_MAX_FILES || "", 10);
+    const configuredMaxBytes = Number.parseInt(process.env.APP_LOG_MAX_BYTES || "", 10);
+    this.maxFiles = Number.isFinite(maxFiles) && maxFiles > 0
+      ? maxFiles
+      : configuredMaxFiles > 0
+        ? configuredMaxFiles
+        : DEFAULT_MAX_FILES;
+    this.maxBytes = Number.isFinite(maxBytes) && maxBytes > 0
+      ? maxBytes
+      : configuredMaxBytes > 0
+        ? configuredMaxBytes
+        : DEFAULT_MAX_BYTES;
+    this._writeQueue = Promise.resolve();
     fs.ensureDirSync(path.dirname(this.logFilePath));
   }
 
@@ -83,8 +98,17 @@ class Logger {
     this._writeToConsole(level, ...args);
 
     const targetLogFile = this.getCurrentLogPath();
-    this._pruneArchives()
-      .then(() => fs.appendFile(targetLogFile, `${line}\n`))
+    this._writeQueue = this._writeQueue
+      .catch(() => {})
+      .then(async () => {
+        await this._pruneArchives();
+        const nextLine = `${line}\n`;
+        const current = await fs.stat(targetLogFile).catch(() => null);
+        if (current && current.size + Buffer.byteLength(nextLine, "utf8") > this.maxBytes) {
+          await fs.writeFile(targetLogFile, "", "utf8");
+        }
+        await fs.appendFile(targetLogFile, nextLine);
+      })
       .catch(() => {
         // Do not crash app on log write errors.
       });
@@ -104,5 +128,7 @@ class Logger {
 }
 
 module.exports = {
+  DEFAULT_MAX_BYTES,
+  DEFAULT_MAX_FILES,
   Logger,
 };

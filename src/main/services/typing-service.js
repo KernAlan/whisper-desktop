@@ -1,7 +1,6 @@
 const { clipboard } = require("electron");
 const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
-const ks = require("node-key-sender");
 const execFileAsync = promisify(execFile);
 
 const MAC_PASTE_MENU_SCRIPT = `
@@ -29,6 +28,8 @@ class TypingService {
     pasteChunkDelayMs = 80,
     platform = process.platform,
     execFileRunner = execFileAsync,
+    targetContextService = null,
+    clipboardApi = clipboard,
   }) {
     this.logger = logger || console;
     this.restoreMode = restoreMode;
@@ -37,6 +38,8 @@ class TypingService {
     this.pasteChunkDelayMs = pasteChunkDelayMs;
     this.platform = platform;
     this.execFileAsync = execFileRunner;
+    this.targetContextService = targetContextService;
+    this.clipboard = clipboardApi;
   }
 
   setRestoreConfig({ restoreMode, restoreDelayMs }) {
@@ -55,7 +58,7 @@ class TypingService {
     }
   }
 
-  async pasteText(text, { onProgress, keepTextOnClipboard = true } = {}) {
+  async pasteText(text, { onProgress, keepTextOnClipboard = false, targetContext } = {}) {
     let clipboardSnapshot = null;
     const finalText = String(text || "");
     const startedAt = Date.now();
@@ -71,9 +74,9 @@ class TypingService {
       const restoreStartedAt = Date.now();
       await new Promise((resolve) => setTimeout(resolve, this.restoreDelayMs));
       try {
-        clipboard.clear();
+        this.clipboard.clear();
         clipboardSnapshot.forEach(({ format, data }) => {
-          clipboard.writeBuffer(format, data);
+          this.clipboard.writeBuffer(format, data);
         });
       } catch (restoreError) {
         this.logger.warn("Failed to restore clipboard:", restoreError);
@@ -88,11 +91,11 @@ class TypingService {
       }
 
       for (let i = 0; i < chunks.length; i += 1) {
-        clipboard.writeText(chunks[i]);
+        this.clipboard.writeText(chunks[i]);
         if (typeof onProgress === "function") {
           onProgress({ index: i + 1, total: chunks.length, chars: chunks[i].length });
         }
-        await this._sendPasteShortcut();
+        await this._sendPasteShortcut(targetContext);
         if (chunks.length > 1 && i < chunks.length - 1) {
           await new Promise((resolve) => setTimeout(resolve, this.pasteChunkDelayMs));
         }
@@ -100,7 +103,9 @@ class TypingService {
       pasteMs = Date.now() - startedAt;
 
       if (keepTextOnClipboard) {
-        clipboard.writeText(finalText);
+        this.clipboard.writeText(finalText);
+      } else if (this.restoreMode === "off") {
+        this.clipboard.writeText(finalText);
       } else if (this.restoreMode === "blocking") {
         await restoreClipboard();
       } else if (this.restoreMode === "deferred") {
@@ -117,14 +122,17 @@ class TypingService {
         restoreMs,
         restoreMode: this.restoreMode,
         chunks: chunks.length,
+        targetRestored: Boolean(targetContext?.available),
       };
     } catch (error) {
-      if (keepTextOnClipboard) {
+      if (keepTextOnClipboard || this.restoreMode === "off") {
         try {
-          clipboard.writeText(finalText);
+          this.clipboard.writeText(finalText);
         } catch (clipboardError) {
           this.logger.warn("Failed to keep text on clipboard after paste error:", clipboardError);
         }
+      } else if (clipboardSnapshot) {
+        await restoreClipboard();
       }
       this.logger.error("Error simulating typing:", error);
       return {
@@ -134,37 +142,48 @@ class TypingService {
         restoreMs,
         restoreMode: this.restoreMode,
         chunks: chunks.length,
+        targetRestored: false,
       };
     }
   }
 
   _captureClipboardSnapshot() {
-    return clipboard.availableFormats().map((format) => ({
+    return this.clipboard.availableFormats().map((format) => ({
       format,
-      data: clipboard.readBuffer(format),
+      data: this.clipboard.readBuffer(format),
     }));
   }
 
-  async _sendPasteShortcut() {
+  async _sendPasteShortcut(targetContext) {
+    if (targetContext !== undefined && this.targetContextService) {
+      return this.targetContextService.sendPaste(targetContext);
+    }
     if (this.platform === "darwin") {
       await this.execFileAsync("osascript", [
         "-e",
         MAC_PASTE_MENU_SCRIPT,
       ]);
     } else if (this.platform === "win32") {
-      try {
-        await this.execFileAsync("powershell.exe", [
-          "-NoProfile",
-          "-NonInteractive",
-          "-Command",
-          "$ws = New-Object -ComObject WScript.Shell; $ws.SendKeys('^v')",
-        ]);
-      } catch (windowsPasteError) {
-        this.logger.warn("Native Windows paste failed, falling back to node-key-sender:", windowsPasteError);
-        await ks.sendCombination(["control", "v"]);
-      }
+      await this.execFileAsync("powershell.exe", [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "$ws = New-Object -ComObject WScript.Shell; $ws.SendKeys('^v')",
+      ]);
     } else {
-      await ks.sendCombination(["control", "v"]);
+      await this._sendLinuxShortcut("ctrl+v");
+    }
+  }
+
+  async _sendLinuxShortcut(shortcut) {
+    try {
+      await this.execFileAsync("xdotool", ["key", "--clearmodifiers", shortcut]);
+    } catch (error) {
+      const wrapped = new Error(
+        "Linux text insertion requires xdotool. Install it and try again."
+      );
+      wrapped.cause = error;
+      throw wrapped;
     }
   }
 
@@ -204,14 +223,16 @@ class TypingService {
     return chunks;
   }
 
-  async captureSelectedText() {
+  async captureSelectedText({ targetContext } = {}) {
     let clipboardSnapshot = null;
 
     try {
       clipboardSnapshot = this._captureClipboardSnapshot();
 
-      clipboard.clear();
-      if (this.platform === "darwin") {
+      this.clipboard.clear();
+      if (targetContext !== undefined && this.targetContextService) {
+        await this.targetContextService.sendCopy(targetContext);
+      } else if (this.platform === "darwin") {
         await this.execFileAsync("osascript", [
           "-e",
           'tell application "System Events" to keystroke "c" using command down',
@@ -224,11 +245,11 @@ class TypingService {
           "$ws = New-Object -ComObject WScript.Shell; $ws.SendKeys('^c')",
         ]);
       } else {
-        await ks.sendCombination(["control", "c"]);
+        await this._sendLinuxShortcut("ctrl+c");
       }
 
       await new Promise((resolve) => setTimeout(resolve, 80));
-      const text = clipboard.readText() || "";
+      const text = this.clipboard.readText() || "";
       return {
         ok: true,
         text,
@@ -245,9 +266,9 @@ class TypingService {
     } finally {
       if (clipboardSnapshot && this.restoreMode !== "off") {
         try {
-          clipboard.clear();
+          this.clipboard.clear();
           clipboardSnapshot.forEach(({ format, data }) => {
-            clipboard.writeBuffer(format, data);
+            this.clipboard.writeBuffer(format, data);
           });
         } catch (restoreError) {
           this.logger.warn("Failed to restore clipboard after copy:", restoreError);

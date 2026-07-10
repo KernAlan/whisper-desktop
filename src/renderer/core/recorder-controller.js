@@ -4,6 +4,7 @@ import { formatError, microphoneStatusForError, userMessageForFailure } from "./
 const CHUNK_SIZE_LIMIT = 20 * 1024 * 1024; // 20MB
 const PREVIEW_SIZE_LIMIT = 2 * 1024 * 1024; // Preview is UX only; keep long recordings for final transcription.
 const AUTO_RECOVERY_RETRY_DELAYS_MS = [1200, 3000, 5000];
+const TARGET_CONTEXT_WAIT_MS = 2000;
 
 export class RecorderController {
   constructor({
@@ -26,6 +27,7 @@ export class RecorderController {
     polishDictation,
     processCommand,
     simulateTyping,
+    undoLastInsertion,
     copyText,
     updateStatus,
     updatePreview,
@@ -51,6 +53,7 @@ export class RecorderController {
     this.polishDictation = polishDictation;
     this.processCommand = processCommand;
     this.simulateTyping = simulateTyping;
+    this.undoLastInsertionHandler = typeof undoLastInsertion === "function" ? undoLastInsertion : null;
     this.copyText = typeof copyText === "function" ? copyText : null;
     this.updateStatus = updateStatus;
     this.updatePreview = typeof updatePreview === "function" ? updatePreview : () => {};
@@ -63,6 +66,10 @@ export class RecorderController {
     this.dictationMode = "polished";
     this.selectedText = "";
     this.selection = { ok: true, chars: 0, text: "" };
+    this.targetContext = null;
+    this.targetCaptureId = "";
+    this.targetContextPending = false;
+    this.targetContextWaiters = [];
     this.previewIntervalMs = 1500;
     this.previewTimer = null;
     this.recordingStatusTimer = null;
@@ -142,7 +149,7 @@ export class RecorderController {
     return this.startRecording(options);
   }
 
-  async startRecording({ mode = "dictation", selectedText = "", selection, dictationMode } = {}) {
+  async startRecording({ mode = "dictation", selectedText = "", selection, dictationMode, targetContext, targetCaptureId } = {}) {
     try {
       this.mode = mode === "command" ? "command" : "dictation";
       if (dictationMode) this.setDictationMode(dictationMode);
@@ -150,6 +157,9 @@ export class RecorderController {
         ? selection
         : { ok: Boolean(selectedText), text: String(selectedText || ""), chars: String(selectedText || "").length };
       this.selectedText = String(this.selection.text || selectedText || "");
+      this.targetContext = targetContext && typeof targetContext === "object" ? targetContext : null;
+      this.targetCaptureId = String(targetCaptureId || "");
+      this.targetContextPending = Boolean(this.targetCaptureId && !this.targetContext);
       if (this.cancelHideWindow) {
         await this.cancelHideWindow();
       }
@@ -207,6 +217,40 @@ export class RecorderController {
       });
       this.stateMachine.transition(STATES.ERROR, status);
     }
+  }
+
+  setTargetContext(targetCaptureId, targetContext) {
+    const captureId = String(targetCaptureId || "");
+    if (!captureId || captureId !== this.targetCaptureId) return false;
+
+    this.targetContext = targetContext && typeof targetContext === "object"
+      ? targetContext
+      : { available: false };
+    this.targetContextPending = false;
+    const waiters = this.targetContextWaiters.splice(0);
+    waiters.forEach((resolve) => resolve(this.targetContext));
+    return true;
+  }
+
+  _waitForTargetContext(timeoutMs = TARGET_CONTEXT_WAIT_MS) {
+    if (!this.targetContextPending) return Promise.resolve(this.targetContext);
+
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        resolve(value);
+      };
+      const timeout = setTimeout(() => {
+        this.targetContextPending = false;
+        this.targetContext = { available: false };
+        this.targetContextWaiters = this.targetContextWaiters.filter((waiter) => waiter !== finish);
+        finish(this.targetContext);
+      }, timeoutMs);
+      this.targetContextWaiters.push(finish);
+    });
   }
 
   stopRecording() {
@@ -348,6 +392,8 @@ export class RecorderController {
     let transcript = null;
     let outputText = null;
     let pasteOk = null;
+    let targetRestored = false;
+    let transactionId = "";
     let keepWindowVisible = false;
     let cancelled = false;
     const stopIfCancelled = () => {
@@ -469,6 +515,8 @@ export class RecorderController {
       restoreMs = output.restoreMs;
       pasteChunks = output.pasteChunks;
       clipboardRestoreMode = output.clipboardRestoreMode;
+      targetRestored = output.targetRestored === true;
+      transactionId = output.transactionId || "";
       if (!pasteOk) keepWindowVisible = true;
       await this._cleanupRecoveredAudioIfSafe(output);
     } catch (error) {
@@ -586,6 +634,9 @@ export class RecorderController {
         commandSelectionOk: this.mode === "command" ? this.selection.ok !== false : null,
         commandOutputChars: this.mode === "command" && outputText ? outputText.length : null,
         pasteOk,
+        targetContext: this.targetContext,
+        targetRestored,
+        transactionId,
       });
     }
   }
@@ -671,12 +722,12 @@ export class RecorderController {
     }
 
     this.updateStatus("Pasting draft...", "blue");
-    const pasteResult = await this.simulateTyping(text);
+    const pasteResult = await this.simulateTyping(text, { targetContext: this.targetContext });
     const ok = typeof pasteResult === "boolean" ? pasteResult : !!pasteResult?.ok;
     if (ok) {
       this.updateStatus("Done", "green");
       this.stateMachine.transition(STATES.IDLE, "Done");
-      this.updatePreview("Inserted. Backup text is still on the clipboard.", {
+      this.updatePreview("Inserted successfully.", {
         mode: "dictation",
         phase: "recovery",
       });
@@ -685,6 +736,7 @@ export class RecorderController {
         copyPartial: Boolean(text),
         pastePartial: Boolean(text),
         history: true,
+        undo: Boolean(pasteResult?.transactionId),
         dismiss: true,
       });
       if (this.scheduleHideWindow) {
@@ -732,7 +784,9 @@ export class RecorderController {
 
     this.updateStatus("Retrying paste...", "blue");
     try {
-      const pasteResult = await this.simulateTyping(this.lastOutputText);
+      const pasteResult = await this.simulateTyping(this.lastOutputText, {
+        targetContext: this.targetContext,
+      });
       const ok = typeof pasteResult === "boolean" ? pasteResult : !!pasteResult?.ok;
       if (ok) {
         this.updateStatus("Done", "green");
@@ -742,6 +796,7 @@ export class RecorderController {
           retryPaste: true,
           copyOutput: true,
           history: true,
+          undo: Boolean(pasteResult?.transactionId),
           dismiss: true,
         });
         if (this.scheduleHideWindow) {
@@ -757,6 +812,34 @@ export class RecorderController {
       this.updateStatus("Paste still failed", "red");
       return false;
     }
+  }
+
+  async undoLastInsertion() {
+    if (!this.undoLastInsertionHandler) {
+      this.updateStatus("Undo is unavailable", "red");
+      return false;
+    }
+    this.updateStatus("Undoing last insert...", "blue");
+    const result = await this.undoLastInsertionHandler();
+    if (!result?.ok) {
+      this.updateStatus(result?.error || "Undo failed", "red");
+      return false;
+    }
+    this.updateStatus("Last insert undone", "green");
+    this.updatePreview("Last insertion was undone.", {
+      mode: this.mode,
+      phase: "recovery",
+      selectedText: this.selectedText,
+      selection: this.selection,
+    });
+    this.updateRecoveryActions({
+      show: true,
+      retryPaste: Boolean(this.lastOutputText),
+      copyOutput: Boolean(this.lastOutputText),
+      history: true,
+      dismiss: true,
+    });
+    return true;
   }
 
   async dismissWindowNow() {
@@ -936,6 +1019,8 @@ export class RecorderController {
 
     if (isCancelled()) return cancelledResult();
     this.lastOutputText = textToPaste;
+    await this._waitForTargetContext();
+    if (isCancelled()) return cancelledResult();
     if (this.hideWindow) {
       try {
         await this.hideWindow();
@@ -945,12 +1030,14 @@ export class RecorderController {
       }
     }
     if (isCancelled()) return cancelledResult();
-    const pasteResult = await this.simulateTyping(textToPaste);
+    const pasteResult = await this.simulateTyping(textToPaste, {
+      targetContext: this.targetContext,
+    });
     if (isCancelled()) return cancelledResult();
     const ok = typeof pasteResult === "boolean" ? pasteResult : !!pasteResult?.ok;
     if (ok) {
       this.updateStatus("Done", "green");
-      this.updatePreview("Inserted. Backup text is still on the clipboard.", {
+      this.updatePreview("Inserted successfully.", {
         mode: this.mode,
         phase: "recovery",
         selectedText: this.selectedText,
@@ -962,6 +1049,7 @@ export class RecorderController {
         retryPaste: true,
         copyOutput: true,
         history: true,
+        undo: Boolean(pasteResult?.transactionId),
         dismiss: true,
       });
     } else {
@@ -1005,6 +1093,8 @@ export class RecorderController {
       restoreMs: Number(pasteResult?.restoreMs || 0),
       pasteChunks: Number(pasteResult?.chunks || 0),
       clipboardRestoreMode: pasteResult?.restoreMode || "unknown",
+      targetRestored: pasteResult?.targetRestored === true,
+      transactionId: pasteResult?.transactionId || "",
     };
   }
 

@@ -16,6 +16,11 @@ class DiagnosticsService {
     this.lastCommand = null;
     this._transcriptListener = null;
     this.transcriptStore = transcriptStore || null;
+    this.apiKeyConfigured = Boolean(config.transcription.apiKey);
+  }
+
+  setApiKeyConfigured(configured) {
+    this.apiKeyConfigured = Boolean(configured);
   }
 
   printStartup({ logFilePath = "", appVersion = "" } = {}) {
@@ -35,7 +40,7 @@ class DiagnosticsService {
       return `...${text.slice(-37)}`;
     };
 
-    const hasApiKey = Boolean(this.config.transcription.apiKey);
+    const hasApiKey = this.apiKeyConfigured;
 
     this.logger.log("");
     this.logger.log(`  ${bold("Whisper Desktop")} ${dim(`v${appVersion || "?"}`)}`);
@@ -90,7 +95,7 @@ class DiagnosticsService {
       return;
     }
     if (type === "api-key-missing") {
-      this.logger.warn("[Config] GROQ_API_KEY is missing; transcription is blocked.");
+      this.logger.warn("[Config] Groq API key is not configured; transcription is blocked.");
       return;
     }
     if (type === "preview-degraded") {
@@ -121,22 +126,33 @@ class DiagnosticsService {
         : payload.transcript;
       if (transcriptText && typeof transcriptText === "string") {
         const entry = {
+          id: payload.transactionId,
           text: transcriptText,
+          rawText: typeof payload.transcript === "string" && payload.transcript.trim()
+            ? payload.transcript
+            : transcriptText,
+          finalText: transcriptText,
           timestamp: Date.now(),
           durationMs: payload.transcribeMs || 0,
           bytes: payload.bytes || 0,
           pasteOk: payload.pasteOk,
           mode: payload.commandInstruction ? "command" : "dictation",
+          target: payload.targetContext,
+          paste: {
+            ok: payload.pasteOk === true,
+            chunks: payload.pasteChunks || 0,
+            pasteMs: payload.pasteMs || 0,
+            restoreMs: payload.restoreMs || 0,
+            targetRestored: payload.targetRestored === true,
+          },
+          polished: payload.polished === true,
         };
         this.transcriptHistory.push(entry);
         if (this.transcriptHistory.length > 50) {
           this.transcriptHistory.shift();
         }
-        const preview = transcriptText.length > 80
-          ? transcriptText.slice(0, 77) + "..."
-          : transcriptText;
         const label = payload.polished ? "Transcript polished" : "Transcript";
-        this.logger.log(`[${label}] (${transcriptText.length} chars) ${preview}`);
+        this.logger.log(`[${label}] ${transcriptText.length} chars saved locally`);
         if (this._transcriptListener) {
           try { this._transcriptListener(entry); } catch (_) { /* ignore */ }
         }
@@ -148,9 +164,6 @@ class DiagnosticsService {
       }
 
       if (payload.commandInstruction && typeof payload.commandInstruction === "string") {
-        const preview = payload.commandInstruction.length > 80
-          ? payload.commandInstruction.slice(0, 77) + "..."
-          : payload.commandInstruction;
         this.lastCommand = {
           timestamp: Date.now(),
           instruction: payload.commandInstruction,
@@ -160,7 +173,7 @@ class DiagnosticsService {
           pasteOk: payload.pasteOk,
         };
         this.logger.log(
-          `[Command] instruction="${preview}" selectedChars=${payload.commandSelectedChars || 0} selectionOk=${payload.commandSelectionOk !== false} outputChars=${payload.commandOutputChars || 0}`
+          `[Command] instructionChars=${payload.commandInstruction.length} selectedChars=${payload.commandSelectedChars || 0} selectionOk=${payload.commandSelectionOk !== false} outputChars=${payload.commandOutputChars || 0}`
         );
       }
 
@@ -189,7 +202,7 @@ class DiagnosticsService {
       ? this._micLabel.slice(0, 37) + "..."
       : this._micLabel;
 
-    const hasKey = Boolean(this.config.transcription.apiKey);
+    const hasKey = this.apiKeyConfigured;
 
     const parts = [];
     parts.push(`${green("Ready.")} Booted in ~${bootMs}ms.`);

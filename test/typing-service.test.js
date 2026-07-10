@@ -9,6 +9,19 @@ function service() {
   return new TypingService({ logger: { warn() {}, error() {} } });
 }
 
+function fakeClipboard(initialText = "original clipboard") {
+  let text = initialText;
+  return {
+    availableFormats: () => ["text/plain"],
+    readBuffer: () => Buffer.from(text, "utf8"),
+    writeBuffer: (_format, data) => { text = Buffer.from(data).toString("utf8"); },
+    clear: () => { text = ""; },
+    writeText: (value) => { text = String(value); },
+    readText: () => text,
+    getText: () => text,
+  };
+}
+
 test("splitTextForPaste keeps short text as one chunk", () => {
   const typing = service();
   assert.deepEqual(typing._splitTextForPaste("hello world", 1500), ["hello world"]);
@@ -53,4 +66,82 @@ test("mac paste reports failure when the Paste menu is unavailable", async () =>
     typing._sendPasteShortcut(),
     /Paste menu item is not available/
   );
+});
+
+test("Windows paste uses a native PowerShell SendKeys command", async () => {
+  const calls = [];
+  const typing = new TypingService({
+    logger: { warn() {}, error() {} },
+    platform: "win32",
+    execFileRunner: async (file, args) => calls.push({ file, args }),
+  });
+
+  await typing._sendPasteShortcut();
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].file, "powershell.exe");
+  assert.ok(calls[0].args.includes("-NonInteractive"));
+  assert.match(calls[0].args.at(-1), /SendKeys\('\^v'\)/);
+});
+
+test("Linux paste uses xdotool without shell interpolation", async () => {
+  const calls = [];
+  const typing = new TypingService({
+    logger: { warn() {}, error() {} },
+    platform: "linux",
+    execFileRunner: async (file, args) => calls.push({ file, args }),
+  });
+
+  await typing._sendPasteShortcut();
+
+  assert.deepEqual(calls, [{
+    file: "xdotool",
+    args: ["key", "--clearmodifiers", "ctrl+v"],
+  }]);
+});
+
+test("Linux paste explains the xdotool requirement", async () => {
+  const typing = new TypingService({
+    logger: { warn() {}, error() {} },
+    platform: "linux",
+    execFileRunner: async () => {
+      throw new Error("ENOENT");
+    },
+  });
+
+  await assert.rejects(typing._sendPasteShortcut(), /requires xdotool/);
+});
+
+test("paste restores the previous clipboard by default", async () => {
+  const clipboardApi = fakeClipboard();
+  const typing = new TypingService({
+    logger: { warn() {}, error() {} },
+    platform: "linux",
+    restoreMode: "blocking",
+    restoreDelayMs: 1,
+    clipboardApi,
+    execFileRunner: async () => {},
+  });
+
+  const result = await typing.pasteText("inserted text");
+
+  assert.equal(result.ok, true);
+  assert.equal(clipboardApi.getText(), "original clipboard");
+});
+
+test("paste failure also restores the previous clipboard", async () => {
+  const clipboardApi = fakeClipboard();
+  const typing = new TypingService({
+    logger: { warn() {}, error() {} },
+    platform: "linux",
+    restoreMode: "blocking",
+    restoreDelayMs: 1,
+    clipboardApi,
+    execFileRunner: async () => { throw new Error("paste unavailable"); },
+  });
+
+  const result = await typing.pasteText("uninserted text");
+
+  assert.equal(result.ok, false);
+  assert.equal(clipboardApi.getText(), "original clipboard");
 });

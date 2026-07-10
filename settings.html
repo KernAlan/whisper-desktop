@@ -61,6 +61,56 @@
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
 
+      .connection-head {
+        align-items: center;
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 12px;
+      }
+
+      .connection-head h2 {
+        margin: 0;
+      }
+
+      .connection-state {
+        align-items: center;
+        color: var(--muted);
+        display: inline-flex;
+        font-size: 11px;
+        font-weight: 700;
+        gap: 6px;
+      }
+
+      .connection-state::before {
+        background: var(--bad);
+        border-radius: 50%;
+        content: "";
+        height: 7px;
+        width: 7px;
+      }
+
+      .connection-state.connected::before {
+        background: var(--good);
+      }
+
+      .credential-controls {
+        align-items: end;
+        display: grid;
+        gap: 8px;
+        grid-template-columns: minmax(0, 1fr) auto auto;
+      }
+
+      .credential-controls button {
+        min-width: 92px;
+      }
+
+      .hint {
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 1.4;
+        margin: 8px 0 0;
+      }
+
       section {
         background: var(--panel);
         border: 1px solid var(--line);
@@ -196,6 +246,22 @@
       .error {
         color: var(--bad);
       }
+
+      @media (max-width: 700px) {
+        .grid,
+        .row,
+        .credential-controls {
+          grid-template-columns: 1fr;
+        }
+
+        section.full {
+          grid-column: auto;
+        }
+
+        .credential-controls button {
+          width: 100%;
+        }
+      }
     </style>
   </head>
   <body>
@@ -206,6 +272,22 @@
       </header>
 
       <div class="grid">
+        <section class="full">
+          <div class="connection-head">
+            <h2>Speech Service</h2>
+            <div id="credentialStatus" class="connection-state">Not configured</div>
+          </div>
+          <div class="credential-controls">
+            <div>
+              <label for="apiKey">Groq API key</label>
+              <input id="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="Enter a new key">
+            </div>
+            <button id="saveApiKey" class="primary" type="button">Save Key</button>
+            <button id="clearApiKey" type="button">Clear Key</button>
+          </div>
+          <p id="credentialHint" class="hint">Keys are encrypted with the operating system credential store.</p>
+        </section>
+
         <section>
           <h2>Dictation</h2>
           <label>Mode</label>

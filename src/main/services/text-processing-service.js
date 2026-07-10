@@ -14,7 +14,7 @@ class TextProcessingService {
     this.model = model;
     this.timeoutMs = timeoutMs;
     this.polishChunkWords = Number.isFinite(polishChunkWords) ? polishChunkWords : 450;
-    this.polishMaxWords = Number.isFinite(polishMaxWords) ? polishMaxWords : 2500;
+    this.polishMaxWords = Number.isFinite(polishMaxWords) ? polishMaxWords : 10000;
     this.dictionaryService = dictionaryService;
     this.logger = logger || console;
     this.groq = this.apiKey ? new Groq({ apiKey: this.apiKey }) : null;

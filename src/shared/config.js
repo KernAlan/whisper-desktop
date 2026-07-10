@@ -26,7 +26,7 @@ function loadConfig(env = process.env) {
       hideWindowMs: toMs(env.APP_HIDE_WINDOW_MS, 5000),
       doneHideWindowMs: toMs(env.APP_DONE_HIDE_WINDOW_MS, 900),
       mediaRecorderTimesliceMs: toMs(env.APP_MEDIARECORDER_TIMESLICE_MS, 150),
-      previewIntervalMs: toMs(env.APP_PREVIEW_INTERVAL_MS, 1500),
+      previewIntervalMs: toMs(env.APP_PREVIEW_INTERVAL_MS, 2500),
       dictationMode: env.APP_DICTATION_MODE || "polished",
       clipboardRestoreMode: env.APP_CLIPBOARD_RESTORE_MODE || "deferred",
       clipboardRestoreDelayMs: toMs(env.APP_CLIPBOARD_RESTORE_DELAY_MS, 120),
@@ -47,7 +47,7 @@ function loadConfig(env = process.env) {
       model: textModel,
       timeoutMs: toMs(env.GROQ_TEXT_TIMEOUT_MS, 20000),
       polishChunkWords: toInt(env.GROQ_POLISH_CHUNK_WORDS, 450),
-      polishMaxWords: toInt(env.GROQ_POLISH_MAX_WORDS, 2500),
+      polishMaxWords: toInt(env.GROQ_POLISH_MAX_WORDS, 10000),
     },
   };
 }

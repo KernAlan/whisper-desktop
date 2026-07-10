@@ -17,11 +17,11 @@ function defaults() {
     fallbackModel: "whisper-large-v3",
     textModel: "llama-3.1-8b-instant",
     polishChunkWords: 450,
-    polishMaxWords: 2500,
+    polishMaxWords: 10000,
     timeoutMs: 5000,
     maxQueue: 2,
     recorderTimesliceMs: 150,
-    previewIntervalMs: 1500,
+    previewIntervalMs: 2500,
     dictationMode: "polished",
     doneHideWindowMs: 900,
     clipboardRestoreMode: "deferred",
@@ -40,7 +40,7 @@ test("applyRuntimeSettings accepts valid settings and ignores invalid values", (
     shortcut: "  Ctrl+Alt+Space  ",
   });
 
-  assert.equal(next.previewIntervalMs, 1500);
+  assert.equal(next.previewIntervalMs, 2500);
   assert.equal(next.dictationMode, "fast");
   assert.equal(next.pasteChunkChars, 2000);
   assert.equal(next.pasteChunkDelayMs, 80);
@@ -104,13 +104,30 @@ test("RuntimeSettingsService migrates old saved default timeout", () => {
 test("RuntimeSettingsService preserves explicit current-version timeout", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "whisper-settings-"));
   const filePath = path.join(dir, "settings.json");
-  fs.writeJsonSync(filePath, { _version: 2, timeoutMs: 10000 });
+  fs.writeJsonSync(filePath, { _version: 3, timeoutMs: 10000 });
   const service = new RuntimeSettingsService({ filePath, defaults: defaults() });
 
   const loaded = service.loadSync();
 
   assert.equal(loaded.timeoutMs, 10000);
 
+  fs.removeSync(dir);
+});
+
+test("RuntimeSettingsService migrates legacy preview and meeting polish defaults", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "whisper-settings-"));
+  const filePath = path.join(dir, "settings.json");
+  fs.writeJsonSync(filePath, {
+    _version: 2,
+    previewIntervalMs: 1500,
+    polishMaxWords: 2500,
+  });
+  const service = new RuntimeSettingsService({ filePath, defaults: defaults() });
+
+  const loaded = service.loadSync();
+
+  assert.equal(loaded.previewIntervalMs, 2500);
+  assert.equal(loaded.polishMaxWords, 10000);
   fs.removeSync(dir);
 });
 

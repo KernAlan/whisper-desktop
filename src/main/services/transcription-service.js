@@ -144,6 +144,31 @@ class TranscriptionService {
     }
   }
 
+  async transcribeCheckpoint(arrayBuffer, { sessionId, index, prompt } = {}) {
+    const safeSessionId = String(sessionId || "")
+      .replace(/[^a-zA-Z0-9_-]/g, "")
+      .slice(0, 120);
+    const safeIndex = Math.max(0, Number(index) || 0);
+    if (!safeSessionId) throw new Error("Checkpoint session ID is required.");
+
+    this._abortPreview("checkpoint transcription requested");
+    const recovery = await this._saveCheckpointBuffer(arrayBuffer, {
+      sessionId: safeSessionId,
+      index: safeIndex,
+    });
+    if (!recovery) throw new Error("Could not persist the recording checkpoint.");
+
+    try {
+      const result = await this._transcribeOne(recovery.path, { prompt });
+      return { text: result.text, recovery };
+    } catch (error) {
+      throw Object.assign(error, {
+        recoveryFiles: [recovery],
+        recoveryTarget: safeSessionId,
+      });
+    }
+  }
+
   async transcribePreview(arrayBuffer) {
     if (this.active || this.previewActive || this.queue.length > 0) {
       return { skipped: true, text: "" };
@@ -193,6 +218,39 @@ class TranscriptionService {
     );
     await fs.writeFile(tempFilePath, Buffer.from(arrayBuffer));
     return this._saveToRecovery(tempFilePath);
+  }
+
+  async _saveCheckpointBuffer(arrayBuffer, { sessionId, index }) {
+    const ext = ".webm";
+    const name = `recording-${sessionId}-segment-${String(index + 1).padStart(3, "0")}${ext}`;
+    const fullPath = path.join(this.recoveryDir, name);
+    const temporaryPath = `${fullPath}.tmp`;
+    try {
+      await fs.ensureDir(this.recoveryDir);
+      const buffer = Buffer.from(arrayBuffer);
+      const sessionBytes = (await this.listRecoveryFiles())
+        .filter((entry) => entry.sessionId === sessionId)
+        .reduce((total, entry) => total + entry.size, 0);
+      if (sessionBytes + buffer.byteLength > this.maxRecoveryBytes) {
+        throw new Error("This recording reached the recovery storage limit.");
+      }
+      await fs.writeFile(temporaryPath, buffer);
+      await fs.move(temporaryPath, fullPath, { overwrite: true });
+      this.logger.log(`[Recovery] Checkpoint saved to ${fullPath}`);
+      await this._pruneRecovery();
+      return {
+        name,
+        path: fullPath,
+        sessionId,
+        index,
+        total: 0,
+        checkpoint: true,
+      };
+    } catch (error) {
+      await fs.unlink(temporaryPath).catch(() => {});
+      this.logger.error("[Recovery] Failed to save checkpoint:", error.message);
+      return null;
+    }
   }
 
   _warnPreviewFailure(error) {
@@ -273,7 +331,9 @@ class TranscriptionService {
           file: stream,
           model,
           response_format: "text",
-          prompt: this.dictionaryService?.buildPrompt?.() || undefined,
+          prompt: [this.dictionaryService?.buildPrompt?.(), options.prompt]
+            .filter(Boolean)
+            .join("\n") || undefined,
         },
         { signal: controller.signal }
       );
@@ -409,10 +469,10 @@ class TranscriptionService {
       safeName = entries[0].name;
     }
     const target = entries.find((entry) => entry.name === safeName);
-    if (target?.total > 1 && target.sessionId) {
+    if ((target?.total > 1 || target?.checkpoint) && target.sessionId) {
       return this.retryRecoverySession(target.sessionId, { removeOnSuccess });
     }
-    if (!target && entries.some((entry) => entry.sessionId === safeName && entry.total > 1)) {
+    if (!target && entries.some((entry) => entry.sessionId === safeName && (entry.total > 1 || entry.checkpoint))) {
       return this.retryRecoverySession(safeName, { removeOnSuccess });
     }
 
@@ -433,15 +493,15 @@ class TranscriptionService {
 
   async retryRecoverySession(sessionId, { removeOnSuccess = true } = {}) {
     const entries = (await this.listRecoveryFiles())
-      .filter((entry) => entry.sessionId === sessionId && entry.total > 1)
+      .filter((entry) => entry.sessionId === sessionId && (entry.total > 1 || entry.checkpoint))
       .sort((a, b) => a.index - b.index);
 
     if (!entries.length) {
       throw new Error(`Recovery session not found: ${sessionId}`);
     }
 
-    const expected = entries[0].total;
-    if (entries.length < expected) {
+    const expected = entries[0].checkpoint ? entries.length : entries[0].total;
+    if (!entries[0].checkpoint && entries.length < expected) {
       throw new Error(`Recovery session is missing chunks (${entries.length}/${expected})`);
     }
 
@@ -472,9 +532,9 @@ class TranscriptionService {
     }
 
     const target = entries.find((entry) => entry.name === safeName);
-    const sessionId = target?.total > 1 && target.sessionId
+    const sessionId = (target?.total > 1 || target?.checkpoint) && target.sessionId
       ? target.sessionId
-      : entries.some((entry) => entry.sessionId === safeName && entry.total > 1)
+      : entries.some((entry) => entry.sessionId === safeName && (entry.total > 1 || entry.checkpoint))
         ? safeName
         : "";
 
@@ -494,12 +554,23 @@ class TranscriptionService {
   }
 
   _parseRecoveryName(name) {
+    const checkpoint = /^recording-(.+)-segment-(\d+)(\.[^.]+)$/i.exec(name);
+    if (checkpoint) {
+      return {
+        sessionId: checkpoint[1],
+        index: Math.max(0, Number(checkpoint[2]) - 1),
+        total: 0,
+        checkpoint: true,
+      };
+    }
+
     const chunk = /^recording-(.+)-part-(\d+)-of-(\d+)(\.[^.]+)$/i.exec(name);
     if (chunk) {
       return {
         sessionId: chunk[1],
         index: Math.max(0, Number(chunk[2]) - 1),
         total: Number(chunk[3]),
+        checkpoint: false,
       };
     }
 
@@ -507,6 +578,7 @@ class TranscriptionService {
       sessionId: "",
       index: 0,
       total: 1,
+      checkpoint: false,
     };
   }
 

@@ -18,8 +18,10 @@ const MUTABLE_KEYS = [
   "pasteChunkChars",
   "pasteChunkDelayMs",
 ];
-const SETTINGS_VERSION = 2;
+const SETTINGS_VERSION = 3;
 const LEGACY_DEFAULT_TIMEOUT_MS = 10000;
+const LEGACY_DEFAULT_PREVIEW_MS = 1500;
+const LEGACY_DEFAULT_POLISH_MAX_WORDS = 2500;
 
 function createRuntimeDefaults(config) {
   return {
@@ -151,6 +153,14 @@ class RuntimeSettingsService {
         this.defaults.timeoutMs < LEGACY_DEFAULT_TIMEOUT_MS
       ) {
         saved.timeoutMs = this.defaults.timeoutMs;
+      }
+      if ((saved._version || 0) < SETTINGS_VERSION) {
+        if (saved.previewIntervalMs === LEGACY_DEFAULT_PREVIEW_MS) {
+          saved.previewIntervalMs = this.defaults.previewIntervalMs;
+        }
+        if (saved.polishMaxWords === LEGACY_DEFAULT_POLISH_MAX_WORDS) {
+          saved.polishMaxWords = this.defaults.polishMaxWords;
+        }
       }
       return applyRuntimeSettings(this.defaults, saved);
     } catch (error) {

@@ -42,7 +42,7 @@ The primary flow is:
 
 1. Electron registers a global shortcut in the main process.
 2. The shortcut opens the inactive overlay without taking focus from the target application.
-3. The renderer records microphone audio and displays recording or preview state.
+3. The renderer records microphone audio and sends one early confidence preview. Short dictations remain one final upload; long recordings rotate into standalone, silence-aware checkpoints that become stable preview text and bounded recovery data.
 4. Audio crosses the preload IPC bridge to the main process for Groq transcription.
 5. Dictation may be polished, or command mode may transform selected text.
 6. The main process captures the initiating target asynchronously, returns focus to it, and inserts the result through the clipboard and native paste shortcuts.
@@ -54,7 +54,7 @@ Preserving the original target, user intent, clipboard contents, and recoverable
 
 - `src/main/main.js`: application lifecycle, global shortcuts, service construction, IPC handlers, and runtime wiring.
 - `src/main/ui/window-manager.js`: overlay and settings windows, positioning, visibility, and focus behavior.
-- `src/main/services/transcription-service.js`: Groq transcription, preview requests, queueing, timeouts, model fallback, chunking, and audio recovery.
+- `src/main/services/transcription-service.js`: Groq transcription, the one-shot preview, persisted long-session checkpoints, queueing, timeouts, model fallback, and audio recovery.
 - `src/main/services/text-processing-service.js`: polished dictation and voice-command text transformations.
 - `src/main/services/typing-service.js`: target insertion, native paste shortcuts, selection capture, clipboard preservation, and restoration.
 - `src/main/services/target-context-service.js`: cross-platform active-window capture and target restoration for paste, copy, and undo.
@@ -66,7 +66,7 @@ Preserving the original target, user intent, clipboard contents, and recoverable
 - `src/main/services/console-service.js`: commands accepted from the terminal CLI.
 - `src/preload/preload.js`: the context-isolated API exposed to renderer windows.
 - `src/renderer/renderer.js`: overlay DOM updates, event wiring, and renderer bootstrap.
-- `src/renderer/core/recorder-controller.js`: recording state, preview scheduling, final processing, retries, cancellation, and paste orchestration.
+- `src/renderer/core/recorder-controller.js`: recording state, early preview scheduling, silence-aware segment rotation, final assembly, retries, cancellation, and paste orchestration.
 - `src/renderer/core/audio-engine.js`: microphone stream and Web Audio lifecycle.
 - `src/renderer/core/device-manager.js`: microphone discovery and selection.
 - `src/renderer/core/recorder-state-machine.js`: legal recorder states and transitions.

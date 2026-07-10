@@ -161,7 +161,7 @@ class ConsoleService {
       kv("set injection <mode>", "deferred | blocking | off"),
       kv("set profile <name>", "fast | balanced"),
       kv("set timeslice <ms>", "Recorder timeslice (min 50)"),
-      kv("set preview <ms>", "Live preview interval (min 1000)"),
+      kv("set preview <ms>", "Initial preview delay (min 1000)"),
       kv("set timeout <ms>", "Transcription timeout (min 3000)"),
       kv("set restore-delay <ms>", "Clipboard restore delay"),
       kv("refresh mic", "Refresh microphone"),
@@ -334,7 +334,7 @@ class ConsoleService {
     if (key === "preview") {
       const ms = Number(value);
       if (!Number.isFinite(ms) || ms < 1000) {
-        this._sendLine("  Preview interval must be >= 1000");
+        this._sendLine("  Preview delay must be >= 1000");
         return;
       }
       this.applySettings({ previewIntervalMs: ms });

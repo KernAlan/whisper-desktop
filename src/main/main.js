@@ -476,6 +476,15 @@ ipcMain.handle("transcribe-preview", async (_event, arrayBuffer) => {
   return transcriptionService.transcribePreview(arrayBuffer);
 });
 
+ipcMain.handle("transcribe-checkpoint", async (_event, { arrayBuffer, options } = {}) => {
+  try {
+    const result = await transcriptionService.transcribeCheckpoint(arrayBuffer, options);
+    return { ok: true, text: result.text, recovery: result.recovery };
+  } catch (error) {
+    return transcriptionErrorPayload(error);
+  }
+});
+
 ipcMain.handle("transcribe-audio-chunked", async (_event, arrayBuffers) => {
   try {
     return {

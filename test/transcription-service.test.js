@@ -209,6 +209,104 @@ test("chunked recovery retries a saved session in order", async () => {
   fs.removeSync(recoveryDir);
 });
 
+test("checkpoint transcription persists a session until explicit cleanup", async () => {
+  const recoveryDir = fs.mkdtempSync(path.join(os.tmpdir(), "whisper-recovery-"));
+  const service = new TranscriptionService({
+    apiKey: "test-key",
+    model: "whisper-large-v3-turbo",
+    fallbackModel: "whisper-large-v3",
+    timeoutMs: 1000,
+    maxQueue: 2,
+    recoveryDir,
+    logger: { log() {}, warn() {}, error() {} },
+  });
+  service._transcribeOne = async (fullPath) => ({
+    text: path.basename(fullPath).includes("segment-001") ? "first" : "second",
+  });
+
+  const first = await service.transcribeCheckpoint(Buffer.from("segment one"), {
+    sessionId: "meeting-1",
+    index: 0,
+  });
+  const second = await service.transcribeCheckpoint(Buffer.from("segment two"), {
+    sessionId: "meeting-1",
+    index: 1,
+  });
+
+  assert.equal(first.recovery.checkpoint, true);
+  assert.equal(fs.existsSync(first.recovery.path), true);
+  assert.equal(fs.existsSync(second.recovery.path), true);
+  assert.equal(
+    await service.retryRecoveryFile("meeting-1", { removeOnSuccess: false }),
+    "first second"
+  );
+  assert.equal(await service.deleteRecoveryTarget("meeting-1"), 2);
+  assert.equal(fs.existsSync(first.recovery.path), false);
+  fs.removeSync(recoveryDir);
+});
+
+test("failed checkpoint transcription retains recoverable audio", async () => {
+  const recoveryDir = fs.mkdtempSync(path.join(os.tmpdir(), "whisper-recovery-"));
+  const service = new TranscriptionService({
+    apiKey: "test-key",
+    model: "whisper-large-v3-turbo",
+    fallbackModel: "whisper-large-v3",
+    timeoutMs: 1000,
+    maxQueue: 2,
+    recoveryDir,
+    logger: { log() {}, warn() {}, error() {} },
+  });
+  service._transcribeOne = async () => {
+    throw new Error("offline");
+  };
+
+  await assert.rejects(
+    service.transcribeCheckpoint(Buffer.from("segment"), {
+      sessionId: "meeting-2",
+      index: 0,
+    }),
+    (error) => {
+      assert.equal(error.recoveryTarget, "meeting-2");
+      assert.equal(error.recoveryFiles[0].checkpoint, true);
+      assert.equal(fs.existsSync(error.recoveryFiles[0].path), true);
+      return true;
+    }
+  );
+  fs.removeSync(recoveryDir);
+});
+
+test("checkpoint sessions cannot grow beyond the recovery byte quota", async () => {
+  const recoveryDir = fs.mkdtempSync(path.join(os.tmpdir(), "whisper-recovery-"));
+  const service = new TranscriptionService({
+    apiKey: "test-key",
+    model: "whisper-large-v3-turbo",
+    fallbackModel: "whisper-large-v3",
+    timeoutMs: 1000,
+    maxQueue: 2,
+    recoveryDir,
+    maxRecoveryBytes: 10,
+    logger: { log() {}, warn() {}, error() {} },
+  });
+  service._transcribeOne = async () => ({ text: "ok" });
+
+  await service.transcribeCheckpoint(Buffer.alloc(6), {
+    sessionId: "bounded-meeting",
+    index: 0,
+  });
+  await assert.rejects(
+    service.transcribeCheckpoint(Buffer.alloc(6), {
+      sessionId: "bounded-meeting",
+      index: 1,
+    }),
+    /Could not persist the recording checkpoint/
+  );
+
+  const entries = await service.listRecoveryFiles();
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].size, 6);
+  fs.removeSync(recoveryDir);
+});
+
 test("recovery pruning enforces a byte quota while retaining the newest session", async () => {
   const recoveryDir = fs.mkdtempSync(path.join(os.tmpdir(), "whisper-recovery-"));
   const service = new TranscriptionService({

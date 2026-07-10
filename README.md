@@ -11,7 +11,7 @@ Tl;dr With the magic that is Whisper and the speed of the Groq servers, I though
 - Global hotkey (Ctrl+Shift+Space) to start/stop recording
 - Command hotkey (Ctrl+Shift+E) to rewrite selected text by voice
 - Real-time audio recording using the system microphone
-- Rolling live transcript preview while recording
+- Early live preview followed by stable long-session checkpoints
 - Automatic microphone selection with device change detection
 - Transcription using Groq Whisper models (fast default with fallback)
 - Optional polished dictation using a text model for punctuation, capitalization, and formatting
@@ -55,7 +55,7 @@ Tl;dr With the magic that is Whisper and the speed of the Groq servers, I though
    APP_HIDE_WINDOW_MS=5000
    APP_DONE_HIDE_WINDOW_MS=900
    APP_MEDIARECORDER_TIMESLICE_MS=150
-   APP_PREVIEW_INTERVAL_MS=1500
+   APP_PREVIEW_INTERVAL_MS=2500
    APP_DICTATION_MODE=polished
    APP_PASTE_CHUNK_CHARS=1500
    APP_PASTE_CHUNK_DELAY_MS=80
@@ -71,7 +71,7 @@ Tl;dr With the magic that is Whisper and the speed of the Groq servers, I though
    GROQ_TEXT_MODEL=llama-3.1-8b-instant
    GROQ_TEXT_TIMEOUT_MS=20000
    GROQ_POLISH_CHUNK_WORDS=450
-   GROQ_POLISH_MAX_WORDS=2500
+   GROQ_POLISH_MAX_WORDS=10000
    ```
 
 ## Usage
@@ -89,7 +89,7 @@ Tl;dr With the magic that is Whisper and the speed of the Groq servers, I though
 
 By default, dictation is lightly polished before paste. It should preserve content words and only drop obvious filler/speech artifacts. Set `APP_DICTATION_MODE=fast` or run `set dictation fast` if you want raw Whisper output with less latency.
 
-Long dictations are handled conservatively: polishing runs in text chunks up to `GROQ_POLISH_CHUNK_WORDS`, and recordings over `GROQ_POLISH_MAX_WORDS` skip polishing and paste the raw transcript.
+Short dictations use one final transcription request. Longer recordings are persisted and transcribed as standalone, silence-aware checkpoints, then assembled before polishing. Polishing runs in text chunks up to `GROQ_POLISH_CHUNK_WORDS`; recordings over `GROQ_POLISH_MAX_WORDS` paste the raw transcript.
 
 Long inserts are pasted in chunks too. The app preserves your clipboard once, pastes each chunk, then restores the clipboard after the full insert.
 Set `APP_CLIPBOARD_RESTORE_MODE=off` when you prefer the inserted text to remain on the clipboard for follow-up use.
@@ -162,7 +162,7 @@ whisper> help
   set injection <mode>       deferred | blocking | off
   set profile <name>         fast | balanced
   set timeslice <ms>         Recorder timeslice (min 50)
-  set preview <ms>           Live preview interval (min 1000)
+  set preview <ms>           Initial live preview delay (min 1000)
   set timeout <ms>           Transcription timeout (min 3000)
   set restore-delay <ms>     Clipboard restore delay
   refresh mic                Refresh microphone
@@ -203,7 +203,7 @@ This works from scripts, Stream Deck buttons, or any automation tool.
 
 If a transcription fails (network error, timeout, API limit), the audio is saved to a recovery folder instead of being deleted. The app retries the saved audio automatically. If that still fails, the overlay stays open with a retry button. If there is partial text, it is copied to your clipboard and you can copy it again from the overlay.
 
-Recordings over 20MB are saved as one chunked recovery session, so retry works on the whole recording without stitching files together. Failed audio is bounded by session count, age, and total bytes; successful audio is not retained by default.
+Long recordings are saved as one checkpoint recovery session, so retry works on the whole recording without manual stitching. Checkpoint audio is removed after successful insertion. Failed audio is bounded by session count, age, and total bytes; successful short-dictation audio is not retained.
 
 To list and retry saved recordings:
 

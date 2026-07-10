@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   transcribeAudio: (arrayBuffer) => ipcRenderer.invoke("transcribe-audio", arrayBuffer),
   transcribePreview: (arrayBuffer) => ipcRenderer.invoke("transcribe-preview", arrayBuffer),
+  transcribeCheckpoint: (arrayBuffer, options = {}) => ipcRenderer.invoke("transcribe-checkpoint", { arrayBuffer, options }),
   transcribeAudioChunked: (arrayBuffers) => ipcRenderer.invoke("transcribe-audio-chunked", arrayBuffers),
   retryRecovery: (target, options = {}) => ipcRenderer.invoke("retry-recovery", { target, ...options }),
   deleteRecovery: (target) => ipcRenderer.invoke("delete-recovery", target),

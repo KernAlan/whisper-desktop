@@ -18,7 +18,7 @@ Whisper Desktop is currently an open-source tool for people who are comfortable 
 
 ## P1: Fast Universal Input
 
-- **Streaming transcription:** preview work should contribute to the final result instead of repeatedly uploading cumulative audio and then starting final transcription from zero.
+- **Streaming transcription:** implemented as one early confidence preview plus persisted, silence-aware checkpoints for long sessions. Short dictations still use one final request.
 - **Tail-latency control:** timeouts and provider failures must degrade to a useful draft quickly; a rare 10-second stall damages trust more than small median improvements help it.
 - **Optional wake phrase:** keep the global shortcut as the dependable baseline, then add an optional local wake phrase for hands-free use. Do not build a collection of headset, mouse-button, foot-pedal, or external push-to-talk integrations.
 - **Application compatibility:** maintain a tested matrix for terminals, browsers, Electron apps, native editors, remote desktops, and applications that reject clipboard paste.
@@ -63,7 +63,7 @@ The remaining P0 gap is real-world coverage across the compatibility matrix and 
 The next milestone should deliver **hands-free speed and dogfood reliability**:
 
 1. Measure and reduce stop-to-insert p95 latency, especially polish and provider tail failures.
-2. Let preview work contribute to final transcription instead of uploading cumulative audio and then starting over.
+2. Validate checkpoint boundary quality and final assembly through regular 30-minute meeting dogfooding.
 3. Add an optional local wake phrase with in-memory pre-roll, an obvious listening state, endpointing, and immediate disable.
 4. Build and maintain a real compatibility matrix for browsers, coding agents, terminals, native editors, remote desktops, and paste-hostile controls.
 5. Add spoken correction commands such as scratch that, append this, replace the last sentence, and safe explicit submit.

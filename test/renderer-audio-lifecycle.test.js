@@ -98,6 +98,7 @@ function createControllerDeps(overrides = {}) {
     transcribeAudio: async () => "hello world",
     transcribeAudioChunked: null,
     transcribePreview: null,
+    transcribeCheckpoint: null,
     retryRecovery: null,
     deleteRecovery: null,
     listTranscripts: null,
@@ -294,6 +295,84 @@ test("RecorderController releases mic when a recording stops", async () => {
 
     assert.equal(releaseCalls, 1);
     assert.equal(transcribeCalls, 1);
+  } finally {
+    globalThis.MediaRecorder = previousMediaRecorder;
+  }
+});
+
+test("RecorderController rotates a quiet long recording and assembles stable checkpoints", async () => {
+  const { RecorderController, STATES } = await import("../src/renderer/core/recorder-controller.js");
+  const previousMediaRecorder = globalThis.MediaRecorder;
+  const checkpointIndexes = [];
+  const pasted = [];
+  let finalTranscribeCalls = 0;
+
+  class FakeMediaRecorder {
+    constructor() {
+      this.state = "inactive";
+    }
+    start() {
+      this.state = "recording";
+    }
+    requestData() {}
+    stop() {
+      this.state = "inactive";
+      this.ondataavailable?.({ data: new Blob([new Uint8Array(1200)]) });
+      this.onstop?.();
+    }
+  }
+  globalThis.MediaRecorder = FakeMediaRecorder;
+
+  try {
+    const controller = new RecorderController(createControllerDeps({
+      segmentMinMs: 0,
+      segmentMaxMs: 100000,
+      segmentSilenceMs: 0,
+      segmentMonitorMs: 100000,
+      audioEngine: {
+        async ensureStream() { return {}; },
+        getAnalyser() {
+          return {
+            fftSize: 8,
+            getFloatTimeDomainData(values) { values.fill(0); },
+          };
+        },
+        async releaseStream() {},
+      },
+      transcribeAudio: async () => {
+        finalTranscribeCalls += 1;
+        return "unexpected";
+      },
+      transcribeCheckpoint: async (_buffer, options) => {
+        checkpointIndexes.push(options.index);
+        return {
+          ok: true,
+          text: options.index === 0 ? "first segment" : "second segment",
+          recovery: {
+            name: `segment-${options.index}`,
+            sessionId: options.sessionId,
+            index: options.index,
+            total: 0,
+            checkpoint: true,
+          },
+        };
+      },
+      deleteRecovery: async () => ({ ok: true }),
+      simulateTyping: async (text) => {
+        pasted.push(text);
+        return { ok: true };
+      },
+    }));
+
+    await controller.startRecording();
+    controller._monitorSegment(controller.segmentStartedAt + 1000);
+    await waitFor(() => assert.equal(checkpointIndexes.length, 1));
+    assert.equal(await controller.toggleRecording({ showRecovery: true }), true);
+    await waitFor(() => assert.equal(controller.getState(), STATES.IDLE));
+
+    assert.deepEqual(checkpointIndexes, [0, 1]);
+    assert.equal(finalTranscribeCalls, 0);
+    assert.deepEqual(pasted, ["first segment second segment"]);
   } finally {
     globalThis.MediaRecorder = previousMediaRecorder;
   }

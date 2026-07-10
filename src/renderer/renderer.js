@@ -341,6 +341,7 @@ async function boot() {
     requestMicrophoneAccess: () => window.electronAPI.requestMicrophoneAccess(),
     transcribeAudio: (arrayBuffer) => window.electronAPI.transcribeAudio(arrayBuffer),
     transcribePreview: (arrayBuffer) => window.electronAPI.transcribePreview(arrayBuffer),
+    transcribeCheckpoint: (arrayBuffer, options) => window.electronAPI.transcribeCheckpoint(arrayBuffer, options),
     transcribeAudioChunked: (arrayBuffers) => window.electronAPI.transcribeAudioChunked(arrayBuffers),
     retryRecovery: (target, options) => window.electronAPI.retryRecovery(target, options),
     deleteRecovery: (target) => window.electronAPI.deleteRecovery(target),

@@ -21,6 +21,7 @@ export class RecorderController {
     transcribeAudio,
     transcribeAudioChunked,
     transcribePreview,
+    transcribeCheckpoint,
     retryRecovery,
     deleteRecovery,
     listTranscripts,
@@ -33,6 +34,10 @@ export class RecorderController {
     updatePreview,
     updateRecoveryActions,
     onDiagnostics,
+    segmentMinMs = 20000,
+    segmentMaxMs = 40000,
+    segmentSilenceMs = 700,
+    segmentMonitorMs = 100,
   }) {
     this.audioEngine = audioEngine;
     this.minRecordingDurationMs = minRecordingDurationMs;
@@ -47,6 +52,7 @@ export class RecorderController {
     this.transcribeAudio = transcribeAudio;
     this.transcribeAudioChunked = transcribeAudioChunked;
     this.transcribePreview = transcribePreview;
+    this.transcribeCheckpoint = typeof transcribeCheckpoint === "function" ? transcribeCheckpoint : null;
     this.retryRecovery = typeof retryRecovery === "function" ? retryRecovery : null;
     this.deleteRecovery = typeof deleteRecovery === "function" ? deleteRecovery : null;
     this.listTranscripts = typeof listTranscripts === "function" ? listTranscripts : null;
@@ -70,7 +76,7 @@ export class RecorderController {
     this.targetCaptureId = "";
     this.targetContextPending = false;
     this.targetContextWaiters = [];
-    this.previewIntervalMs = 1500;
+    this.previewIntervalMs = 2500;
     this.previewTimer = null;
     this.recordingStatusTimer = null;
     this.processingStatusTimer = null;
@@ -80,6 +86,23 @@ export class RecorderController {
     this.previewPartCount = 0;
     this.previewFailureCount = 0;
     this.previewRequestActive = false;
+    this.recordingStream = null;
+    this.recordingStopRequested = false;
+    this.segmentMinMs = segmentMinMs;
+    this.segmentMaxMs = segmentMaxMs;
+    this.segmentSilenceMs = segmentSilenceMs;
+    this.segmentMonitorMs = segmentMonitorMs;
+    this.segmentStartedAt = 0;
+    this.segmentSilenceStartedAt = 0;
+    this.segmentMonitorTimer = null;
+    this.segmentRotationPromise = null;
+    this.segmentSessionId = "";
+    this.segmentIndex = 0;
+    this.checkpointQueue = Promise.resolve();
+    this.checkpointTexts = [];
+    this.checkpointFailures = [];
+    this.checkpointRecoveryFiles = [];
+    this.totalRecordedBytes = 0;
     this.lastRecovery = null;
     this.lastOutputText = "";
     this.pendingRecoveryCleanupTarget = "";
@@ -133,13 +156,13 @@ export class RecorderController {
   }
 
   async toggleRecording(options = {}) {
-    if (options?.showRecovery) {
-      return this.showRecoveryConsole();
-    }
-
     const state = this.getState();
     if (state === STATES.RECORDING) {
       return this.stopRecording();
+    }
+
+    if (options?.showRecovery) {
+      return this.showRecoveryConsole();
     }
 
     if (state !== STATES.IDLE && state !== STATES.ERROR) {
@@ -166,8 +189,15 @@ export class RecorderController {
       this.stateMachine.transition(STATES.ARMING, "Preparing recording");
       await this.requestMicrophoneAccess();
       const stream = await this.audioEngine.ensureStream();
-      this.mediaRecorder = new MediaRecorder(stream);
-      this.audioChunks = [];
+      this.recordingStream = stream;
+      this.recordingStopRequested = false;
+      this.segmentSessionId = `session-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      this.segmentIndex = 0;
+      this.checkpointQueue = Promise.resolve();
+      this.checkpointTexts = [];
+      this.checkpointFailures = [];
+      this.checkpointRecoveryFiles = [];
+      this.totalRecordedBytes = 0;
       this.previewText = "";
       this.previewPartCount = 0;
       this.previewFailureCount = 0;
@@ -175,14 +205,7 @@ export class RecorderController {
       this.pendingRecoveryCleanupTarget = "";
       this.updateRecoveryActions(null);
       this.recordingStartedAt = Date.now();
-      this.mediaRecorder.ondataavailable = (event) => this.audioChunks.push(event.data);
-      this.mediaRecorder.onstop = () => {
-        this.handleRecordingStop().catch((error) => {
-          console.error("Failed processing recording:", error);
-          this.stateMachine.transition(STATES.ERROR, "Error processing audio");
-        });
-      };
-      this.mediaRecorder.start(this.mediaRecorderTimesliceMs);
+      this._startMediaRecorderSegment(stream);
       this.stateMachine.transition(STATES.RECORDING, "Recording");
       if (this.mode === "command") {
         const chars = this.selectedText.length;
@@ -197,6 +220,7 @@ export class RecorderController {
         selection: this.selection,
       });
       this.startPreviewLoop();
+      this.startSegmentMonitor();
       this.startRecordingStatusLoop();
     } catch (error) {
       await this._releaseAudioStream("start failure");
@@ -254,41 +278,188 @@ export class RecorderController {
   }
 
   stopRecording() {
-    if (!this.mediaRecorder || this.mediaRecorder.state === "inactive") return false;
+    if (this.getState() !== STATES.RECORDING || this.recordingStopRequested) return false;
+    this.recordingStopRequested = true;
     this.stopPreviewLoop();
+    this.stopSegmentMonitor();
     this.stopRecordingStatusLoop();
+    const remainingMinimum = Math.max(
+      0,
+      this.minRecordingDurationMs - (Date.now() - this.recordingStartedAt)
+    );
     setTimeout(() => {
-      if (typeof this.mediaRecorder.requestData === "function") {
+      this.updateStatus("Processing...", "blue");
+      this._finishRecording().catch((error) => {
+        console.error("Failed processing recording:", error);
+        this.stateMachine.transition(STATES.ERROR, "Error processing audio");
+      });
+    }, remainingMinimum);
+    return true;
+  }
+
+  _startMediaRecorderSegment(stream) {
+    const recorder = new MediaRecorder(stream);
+    const chunks = [];
+    recorder.ondataavailable = (event) => {
+      if (event.data?.size !== 0) chunks.push(event.data);
+    };
+    this.mediaRecorder = recorder;
+    this.audioChunks = chunks;
+    this.segmentStartedAt = Date.now();
+    this.segmentSilenceStartedAt = 0;
+    recorder.start(this.mediaRecorderTimesliceMs);
+  }
+
+  _closeMediaRecorderSegment() {
+    const recorder = this.mediaRecorder;
+    const chunks = this.audioChunks;
+    if (!recorder || recorder.state === "inactive") return Promise.resolve(chunks);
+
+    return new Promise((resolve) => {
+      recorder.onstop = () => resolve(chunks);
+      if (typeof recorder.requestData === "function") {
         try {
-          this.mediaRecorder.requestData();
+          recorder.requestData();
         } catch (_error) {
-          // Ignore requestData issues before stop.
+          // Some MediaRecorder implementations flush automatically on stop.
         }
       }
-      this.mediaRecorder.stop();
-      this.updateStatus("Processing...", "blue");
-    }, this.minRecordingDurationMs);
-    return true;
+      recorder.stop();
+    });
+  }
+
+  async _finishRecording() {
+    if (this.segmentRotationPromise) await this.segmentRotationPromise;
+    const finalChunks = await this._closeMediaRecorderSegment();
+    await this.handleRecordingStop(finalChunks);
+  }
+
+  startSegmentMonitor() {
+    this.stopSegmentMonitor();
+    if (!this.transcribeCheckpoint) return;
+    this.segmentMonitorTimer = setInterval(() => this._monitorSegment(), this.segmentMonitorMs);
+  }
+
+  stopSegmentMonitor() {
+    if (this.segmentMonitorTimer) {
+      clearInterval(this.segmentMonitorTimer);
+      this.segmentMonitorTimer = null;
+    }
+  }
+
+  _monitorSegment(now = Date.now()) {
+    if (this.recordingStopRequested || this.segmentRotationPromise || this.getState() !== STATES.RECORDING) return;
+    const elapsed = now - this.segmentStartedAt;
+    const silent = this._isInputSilent();
+    if (silent) {
+      if (!this.segmentSilenceStartedAt) this.segmentSilenceStartedAt = now;
+    } else {
+      this.segmentSilenceStartedAt = 0;
+    }
+    const heldSilence = this.segmentSilenceStartedAt
+      ? now - this.segmentSilenceStartedAt
+      : 0;
+    if (elapsed >= this.segmentMaxMs || (elapsed >= this.segmentMinMs && heldSilence >= this.segmentSilenceMs)) {
+      this.segmentRotationPromise = this._rotateSegmentForCheckpoint()
+        .catch((error) => console.error("Checkpoint rotation failed:", error))
+        .finally(() => {
+          this.segmentRotationPromise = null;
+        });
+    }
+  }
+
+  _isInputSilent() {
+    const analyser = this.audioEngine?.getAnalyser?.();
+    if (!analyser) return false;
+    const length = analyser.fftSize || analyser.frequencyBinCount || 2048;
+    if (typeof analyser.getFloatTimeDomainData === "function") {
+      const values = new Float32Array(length);
+      analyser.getFloatTimeDomainData(values);
+      let energy = 0;
+      for (const value of values) energy += value * value;
+      return Math.sqrt(energy / values.length) < 0.018;
+    }
+    if (typeof analyser.getByteTimeDomainData === "function") {
+      const values = new Uint8Array(length);
+      analyser.getByteTimeDomainData(values);
+      let energy = 0;
+      for (const value of values) {
+        const centered = (value - 128) / 128;
+        energy += centered * centered;
+      }
+      return Math.sqrt(energy / values.length) < 0.018;
+    }
+    return false;
+  }
+
+  async _rotateSegmentForCheckpoint() {
+    const chunks = await this._closeMediaRecorderSegment();
+    if (this.recordingStopRequested) {
+      this.audioChunks = chunks;
+      return;
+    }
+    this._startMediaRecorderSegment(this.recordingStream);
+    const buffer = await new Blob(chunks, { type: "audio/webm" }).arrayBuffer();
+    if (buffer.byteLength < 1000) return;
+    this.totalRecordedBytes += buffer.byteLength;
+    this._queueCheckpoint(buffer, this.segmentIndex);
+    this.segmentIndex += 1;
+  }
+
+  _queueCheckpoint(arrayBuffer, index) {
+    this.checkpointQueue = this.checkpointQueue.then(async () => {
+      try {
+        const context = this._assembledCheckpointText().slice(-500);
+        const result = await this.transcribeCheckpoint(arrayBuffer, {
+          sessionId: this.segmentSessionId,
+          index,
+          prompt: context || undefined,
+        });
+        if (!result?.ok) {
+          const error = new Error(result?.error || "Checkpoint transcription failed");
+          error.recoveryFiles = Array.isArray(result?.recoveryFiles) ? result.recoveryFiles : [];
+          throw error;
+        }
+        if (result.recovery) this.checkpointRecoveryFiles.push(result.recovery);
+        this.checkpointTexts[index] = String(result.text || "").trim();
+        const stableText = this._assembledCheckpointText();
+        if (stableText) {
+          this.previewText = stableText;
+          this.previewPartCount = this.checkpointTexts.filter(Boolean).length;
+          this.updatePreview(stableText, {
+            mode: this.mode,
+            phase: "preview",
+            selectedText: this.selectedText,
+            selection: this.selection,
+            previewParts: this.previewPartCount,
+          });
+        }
+      } catch (error) {
+        this.checkpointFailures.push(error);
+        this.checkpointRecoveryFiles.push(...(Array.isArray(error?.recoveryFiles) ? error.recoveryFiles : []));
+        this.onDiagnostics({ type: "checkpoint-saved", index, error: error.message });
+      }
+    });
+    return this.checkpointQueue;
+  }
+
+  _assembledCheckpointText() {
+    return this.checkpointTexts.filter(Boolean).join(" ").trim();
   }
 
   startPreviewLoop() {
     this.stopPreviewLoop();
     if (!this.transcribePreview) return;
-    this.previewTimer = setInterval(() => {
-      this.runPreviewTranscription().catch((error) => {
-        console.warn("Preview transcription failed:", error);
-      });
-    }, this.previewIntervalMs);
-    setTimeout(() => {
+    this.previewTimer = setTimeout(() => {
       this.runPreviewTranscription().catch((error) => {
         console.warn("Initial preview transcription failed:", error);
       });
-    }, Math.max(800, Math.floor(this.previewIntervalMs * 0.7)));
+    }, this.previewIntervalMs);
   }
 
   stopPreviewLoop() {
     if (this.previewTimer) {
-      clearInterval(this.previewTimer);
+      clearTimeout(this.previewTimer);
       this.previewTimer = null;
     }
   }
@@ -378,7 +549,7 @@ export class RecorderController {
     this.updateStatus(`Recording ${elapsed}`, "red");
   }
 
-  async handleRecordingStop() {
+  async handleRecordingStop(finalChunks = this.audioChunks) {
     const pipelineId = this._beginPipeline();
     const pipelineStartedAt = Date.now();
     let transcribeMs = 0;
@@ -415,11 +586,11 @@ export class RecorderController {
       });
       this.startProcessingStatusLoop("Transcribing");
       const preprocessStartedAt = Date.now();
-      const audioBlob = new Blob(this.audioChunks, { type: "audio/webm" });
+      const audioBlob = new Blob(finalChunks, { type: "audio/webm" });
       const arrayBuffer = await audioBlob.arrayBuffer();
       if (stopIfCancelled()) return;
       preprocessMs = Date.now() - preprocessStartedAt;
-      bytes = arrayBuffer.byteLength;
+      bytes = this.totalRecordedBytes + arrayBuffer.byteLength;
 
       if (bytes < 1000) {
         keepWindowVisible = true;
@@ -442,9 +613,11 @@ export class RecorderController {
 
       const transcribeStartedAt = Date.now();
 
-      if (bytes > CHUNK_SIZE_LIMIT && this.transcribeAudioChunked) {
+      if (this.segmentIndex > 0 || this.checkpointRecoveryFiles.length || this.checkpointFailures.length) {
+        transcript = await this._transcribeSegmentedRecording(arrayBuffer);
+      } else if (bytes > CHUNK_SIZE_LIMIT && this.transcribeAudioChunked) {
         // Split audioChunks into groups that each stay under the size limit
-        const chunkGroups = this._splitChunks(this.audioChunks, CHUNK_SIZE_LIMIT);
+        const chunkGroups = this._splitChunks(finalChunks, CHUNK_SIZE_LIMIT);
         const sizeMB = (bytes / (1024 * 1024)).toFixed(1);
         console.log(`Large recording (${sizeMB}MB) — splitting into ${chunkGroups.length} chunks`);
         if (bytes > 100 * 1024 * 1024) {
@@ -598,6 +771,9 @@ export class RecorderController {
       }
     } finally {
       this.audioChunks = [];
+      this.recordingStream = null;
+      this.recordingStopRequested = false;
+      this.stopSegmentMonitor();
       this.stopPreviewLoop();
       this.stopRecordingStatusLoop();
       this.stopProcessingStatusLoop();
@@ -1104,7 +1280,32 @@ export class RecorderController {
     const error = new Error(result?.error || "Transcription failed");
     error.recoveryFiles = Array.isArray(result?.recoveryFiles) ? result.recoveryFiles : [];
     error.partialText = typeof result?.partialText === "string" ? result.partialText : "";
+    error.recoveryTarget = result?.recoveryTarget || "";
     throw error;
+  }
+
+  async _transcribeSegmentedRecording(finalArrayBuffer) {
+    if (finalArrayBuffer.byteLength >= 1000) {
+      this.totalRecordedBytes += finalArrayBuffer.byteLength;
+      this._queueCheckpoint(finalArrayBuffer, this.segmentIndex);
+      this.segmentIndex += 1;
+    }
+    await this.checkpointQueue;
+
+    if (this.checkpointFailures.length) {
+      const recoveryFiles = this.checkpointRecoveryFiles;
+      const partialText = this._assembledCheckpointText();
+      return this._transcribeWithAutoRecovery(() => Promise.resolve({
+        ok: false,
+        error: this.checkpointFailures.at(-1)?.message || "A recording checkpoint failed.",
+        recoveryFiles,
+        recoveryTarget: this.segmentSessionId,
+        partialText,
+      }));
+    }
+
+    this.pendingRecoveryCleanupTarget = this.segmentSessionId;
+    return this._assembledCheckpointText();
   }
 
   async _transcribeWithAutoRecovery(runTranscription) {
@@ -1156,7 +1357,7 @@ export class RecorderController {
 
   _recoveryTarget(recoveryFiles) {
     const first = recoveryFiles[0] || {};
-    if (first.total > 1 && first.sessionId) return first.sessionId;
+    if ((first.total > 1 || first.checkpoint) && first.sessionId) return first.sessionId;
     return first.name || "latest";
   }
 

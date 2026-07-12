@@ -5,9 +5,9 @@ Whisper Desktop is an Electron-based application that allows users to transcribe
 ## Download
 
 <p align="center">
-  <a href="https://github.com/KernAlan/whisper-desktop/releases/latest/download/Whisper-Desktop-Windows-Setup.exe"><img src="https://img.shields.io/badge/Windows-Download-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Download for Windows"></a><br><br>
-  <a href="https://github.com/KernAlan/whisper-desktop/releases/latest/download/Whisper-Desktop-macOS-Apple-Silicon.dmg"><img src="https://img.shields.io/badge/macOS_Apple_Silicon-Download-111111?style=for-the-badge&logo=apple&logoColor=white" alt="Download for macOS Apple Silicon"></a><br><br>
-  <a href="https://github.com/KernAlan/whisper-desktop/releases/latest/download/Whisper-Desktop-macOS-Intel.dmg"><img src="https://img.shields.io/badge/macOS_Intel-Download-111111?style=for-the-badge&logo=apple&logoColor=white" alt="Download for macOS Intel"></a>
+  <a href="https://github.com/KernAlan/whisper-desktop/releases/latest/download/Whisper-Desktop-Windows-Setup.exe"><img src="https://img.shields.io/badge/-Download%20for%20Windows-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Download for Windows"></a><br><br>
+  <a href="https://github.com/KernAlan/whisper-desktop/releases/latest/download/Whisper-Desktop-macOS-Apple-Silicon.dmg"><img src="https://img.shields.io/badge/-Download%20for%20macOS%20Apple%20Silicon-111111?style=for-the-badge&logo=apple&logoColor=white" alt="Download for macOS Apple Silicon"></a><br><br>
+  <a href="https://github.com/KernAlan/whisper-desktop/releases/latest/download/Whisper-Desktop-macOS-Intel.dmg"><img src="https://img.shields.io/badge/-Download%20for%20macOS%20Intel-111111?style=for-the-badge&logo=apple&logoColor=white" alt="Download for macOS Intel"></a>
 </p>
 
 The buttons above always point to the latest GitHub release. The app uses your own Groq API key; after installation, enter it in **Settings**.

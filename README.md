@@ -1,6 +1,6 @@
 # Whisper Desktop
 
-Whisper Desktop is an Electron-based application that allows users to transcribe speech to text using OpenAI's Whisper model through the Groq API. It provides a simple interface for recording audio and automatically transcribing it into text, which can then be inserted into any active text input field.
+Push-to-talk dictation for your desktop. Hit a hotkey, talk, and the transcript lands wherever your cursor is. Whisper is magic and Groq's servers are fast enough that it feels instant, so I spent a weekend wiring the two into a tool I could speak into globally.
 
 ## Download
 
@@ -10,148 +10,87 @@ Whisper Desktop is an Electron-based application that allows users to transcribe
   <a href="https://github.com/KernAlan/whisper-desktop/releases/latest/download/Whisper-Desktop-macOS-Intel.dmg"><img src="https://img.shields.io/badge/-Download%20for%20macOS%20Intel-111111?style=for-the-badge&logo=apple&logoColor=white" alt="Download for macOS Intel"></a>
 </p>
 
-The buttons above always point to the latest GitHub release. The app uses your own Groq API key; after installation, enter it in **Settings**.
+These always point to the latest release. You bring your own Groq API key — enter it in **Settings** after installing.
 
-![ezgif com-video-to-gif-converter](https://github.com/KernAlan/whisper-desktop/assets/63753020/b8232278-ece9-4f53-a34a-3354be0bcc01)
+![Whisper Desktop demo](https://github.com/KernAlan/whisper-desktop/assets/63753020/b8232278-ece9-4f53-a34a-3354be0bcc01)
 
-Tl;dr With the magic that is Whisper and the speed of the Groq servers, I thought I'd spend a weekend to make a tool to help me speak globally into my computer. 
+## What it does
 
-## Features
+- `Ctrl+Shift+Space` to dictate into whatever field your cursor is in
+- Say "Hey Whisper" for hands-free dictation, "Stop Whisper" to finish (optional, detection runs locally)
+- `Ctrl+Shift+E` to rewrite selected text by voice — "make this shorter", "turn this into bullets"
+- Optional polish pass that fixes punctuation and drops filler, or raw Whisper output if you'd rather have the speed
+- A custom dictionary so it stops butchering your name and your project's jargon
+- Long recordings get checkpointed and chunked automatically; failed ones are saved and retried instead of thrown away
+- Your clipboard is preserved across inserts, and there's an **Undo Last Insert** if a paste goes somewhere it shouldn't
+- A terminal CLI for changing models, hotkeys, and modes at runtime — plus a settings window if you don't want to memorize commands
+- API key stored encrypted in the OS credential store
 
-- Global hotkey (Ctrl+Shift+Space) to start/stop recording
-- Optional local "Hey Whisper" wake phrase for hands-free dictation
-- Command hotkey (Ctrl+Shift+E) to rewrite selected text by voice
-- Real-time audio recording using the system microphone
-- Early live preview followed by stable long-session checkpoints
-- Automatic microphone selection with device change detection
-- Transcription using Groq Whisper models (fast default with fallback)
-- Optional polished dictation using a text model for punctuation, capitalization, and formatting
-- Local custom dictionary to bias transcription toward your names and jargon
-- Target-aware insertion of transcribed text into the field that started dictation
-- Reversible recent insertion with an **Undo Last Insert** recovery action
-- Clipboard restoration by default, with an opt-out for keeping generated text on the clipboard
-- Audio recovery — failed recordings are saved instead of deleted
-- Chunked transcription — large recordings (>20MB) are auto-split to stay under the API size limit
-- Terminal CLI for runtime configuration and diagnostics
-- Settings window for hotkeys, modes, models, dictionary terms, and long-text tuning
-- Encrypted in-app Groq API key setup using the operating system credential store
-- Saved settings so runtime tweaks survive restarts
-- One-shot CLI commands for scripting and automation
+## Running from source
 
-## Installation
+```
+git clone https://github.com/kernalan/whisper-desktop.git
+cd whisper-desktop
+npm install
+npm start
+```
 
-1. Clone the repository:
+Then open **Settings** and enter your Groq API key under **Speech Service** (get one from the [Groq Console](https://console.groq.com/keys)). The key is encrypted with the OS credential store and never displayed again.
 
-   ```
-   git clone https://github.com/kernalan/whisper-desktop.git
-   cd whisper-desktop
-   ```
+For development or managed environments you can use a `.env` file instead:
 
-2. Install dependencies:
+```
+GROQ_API_KEY=your_api_key_here
+# Optional (defaults shown)
+APP_HOTKEY=CommandOrControl+Shift+Space
+APP_COMMAND_HOTKEY=CommandOrControl+Shift+E
+APP_HIDE_WINDOW_MS=5000
+APP_DONE_HIDE_WINDOW_MS=900
+APP_MEDIARECORDER_TIMESLICE_MS=150
+APP_PREVIEW_INTERVAL_MS=2500
+APP_DICTATION_MODE=polished
+APP_WAKE_PHRASE_ENABLED=false
+APP_PASTE_CHUNK_CHARS=1500
+APP_PASTE_CHUNK_DELAY_MS=80
+APP_CLIPBOARD_RESTORE_MODE=deferred
+APP_CLIPBOARD_RESTORE_DELAY_MS=120
+APP_LOG_FILE=logs/app.log
+APP_LOG_MAX_FILES=3
+APP_LOG_MAX_BYTES=2097152
+GROQ_TRANSCRIPTION_MODEL=whisper-large-v3-turbo
+GROQ_FALLBACK_TRANSCRIPTION_MODEL=whisper-large-v3
+GROQ_TRANSCRIPTION_TIMEOUT_MS=5000
+GROQ_TRANSCRIPTION_MAX_QUEUE=2
+GROQ_TEXT_MODEL=llama-3.1-8b-instant
+GROQ_TEXT_TIMEOUT_MS=20000
+GROQ_POLISH_CHUNK_WORDS=450
+GROQ_POLISH_MAX_WORDS=10000
+```
 
-   ```
-   npm install
-   ```
-
-3. Start the application, open **Settings**, and enter your Groq API key under **Speech Service**. The key is encrypted with the operating system credential store and is never displayed again.
-
-   You can obtain a key from [Groq Console](https://console.groq.com/keys).
-
-   For development or managed environments, you can instead create a `.env` file and set `GROQ_API_KEY`:
-   ```
-   GROQ_API_KEY=your_api_key_here
-   # Optional (defaults shown)
-   APP_HOTKEY=CommandOrControl+Shift+Space
-   APP_COMMAND_HOTKEY=CommandOrControl+Shift+E
-   APP_HIDE_WINDOW_MS=5000
-   APP_DONE_HIDE_WINDOW_MS=900
-   APP_MEDIARECORDER_TIMESLICE_MS=150
-   APP_PREVIEW_INTERVAL_MS=2500
-   APP_DICTATION_MODE=polished
-   APP_WAKE_PHRASE_ENABLED=false
-   APP_PASTE_CHUNK_CHARS=1500
-   APP_PASTE_CHUNK_DELAY_MS=80
-   APP_CLIPBOARD_RESTORE_MODE=deferred
-   APP_CLIPBOARD_RESTORE_DELAY_MS=120
-   APP_LOG_FILE=logs/app.log
-   APP_LOG_MAX_FILES=3
-   APP_LOG_MAX_BYTES=2097152
-   GROQ_TRANSCRIPTION_MODEL=whisper-large-v3-turbo
-   GROQ_FALLBACK_TRANSCRIPTION_MODEL=whisper-large-v3
-   GROQ_TRANSCRIPTION_TIMEOUT_MS=5000
-   GROQ_TRANSCRIPTION_MAX_QUEUE=2
-   GROQ_TEXT_MODEL=llama-3.1-8b-instant
-   GROQ_TEXT_TIMEOUT_MS=20000
-   GROQ_POLISH_CHUNK_WORDS=450
-   GROQ_POLISH_MAX_WORDS=10000
-   ```
+A key saved through Settings takes precedence over `GROQ_API_KEY`; clear it and the app falls back to the environment key.
 
 ## Usage
 
-1. Start the application:
+Put your cursor in any text field, press `Ctrl+Shift+Space` (`Cmd+Shift+Space` on macOS), talk, and press it again. The transcript is pasted into the field you started from.
 
-   ```
-   npm start
-   ```
+By default the transcript is lightly polished before pasting — content words are preserved, obvious filler and speech artifacts are dropped. If you want raw Whisper output with less latency, set `APP_DICTATION_MODE=fast` or run `set dictation fast` in the CLI.
 
-2. Press `Ctrl+Shift+Space` (or `Cmd+Shift+Space` on macOS) to start recording
-3. Speak into your microphone
-4. Press `Ctrl+Shift+Space` again to stop recording and initiate transcription
-5. The transcribed text will be automatically inserted into the active text input field
+**Wake phrase.** Enable it in Settings or with `node cli.js set wake on`, then say "Hey Whisper" to start dictating and "Stop Whisper" to finish. Detection runs locally — ambient audio stays in memory on your machine, and nothing is sent to Groq until you've actually started dictating. A short pre-speech timeout cancels accidental activations, and the hotkey still works as the manual fallback.
 
-By default, dictation is lightly polished before paste. It should preserve content words and only drop obvious filler/speech artifacts. Set `APP_DICTATION_MODE=fast` or run `set dictation fast` if you want raw Whisper output with less latency.
+**Long recordings.** Short dictations go up as one transcription request. Longer ones are persisted and transcribed as silence-aware checkpoints, then assembled before polishing. Recordings over 20MB are split to stay under the API size limit; recordings over `GROQ_POLISH_MAX_WORDS` skip the polish pass and paste raw. Long inserts are pasted in chunks, and your clipboard is saved once and restored at the end (set `APP_CLIPBOARD_RESTORE_MODE=off` if you'd rather keep the inserted text on the clipboard).
 
-For hands-free use, enable **Wake Phrase** in Settings or run `node cli.js set wake on`. The local detector listens for `Hey Whisper` on the selected microphone, then opens dictation. Say `Stop Whisper` to finish; pauses are preserved, and a short pre-speech timeout only cancels accidental activations. Ambient audio stays local and in memory until activation; the normal Groq transcription request starts only after speech is captured. Disable it with `node cli.js set wake off` or from Settings. The keyboard shortcut remains available as the dependable manual fallback.
-
-Short dictations use one final transcription request. Longer recordings are persisted and transcribed as standalone, silence-aware checkpoints, then assembled before polishing. Polishing runs in text chunks up to `GROQ_POLISH_CHUNK_WORDS`; recordings over `GROQ_POLISH_MAX_WORDS` paste the raw transcript.
-
-Long inserts are pasted in chunks too. The app preserves your clipboard once, pastes each chunk, then restores the clipboard after the full insert.
-Set `APP_CLIPBOARD_RESTORE_MODE=off` when you prefer the inserted text to remain on the clipboard for follow-up use.
-
-### Trying It Locally
-
-Once the app is running, you can check that the hotkeys and models loaded:
-
-```
-node cli.js status
-```
-
-Then put your cursor in any text field and try:
-
-- `Ctrl+Shift+Space` to dictate
-- `Ctrl+Shift+E` to edit selected text by voice
-
-Open settings from the terminal if you want to change the main runtime options without remembering every CLI command:
-
-```
-node cli.js settings
-```
-
-The settings window is also where you connect or replace the Groq API key. A securely saved key takes precedence over `GROQ_API_KEY`; clearing it returns to the environment key when one is present.
-
-Settings changed from the window or CLI are saved locally and loaded next time. The `.env` file is still the default source, and `reset settings` goes back to those defaults.
-
-To shut it down from the terminal:
-
-```
-node cli.js quit
-```
-
-### Command Mode
+### Command mode
 
 1. Select text in any app
-2. Press `Ctrl+Shift+E` (or `Cmd+Shift+E` on macOS)
-3. Say an instruction like "make this shorter" or "turn this into bullets"
-4. Press the command hotkey again to stop
-5. The selected text is replaced with the rewritten result
+2. Press `Ctrl+Shift+E` (`Cmd+Shift+E` on macOS)
+3. Say what you want done — "make this shorter", "turn this into bullets"
+4. Press the hotkey again to stop
 
-This uses the text model configured by `GROQ_TEXT_MODEL`.
-
-If no selected text is captured, the overlay says so and command mode treats your instruction as a request to generate new text instead of rewriting a selection.
+The selection is replaced with the rewrite, using the model set by `GROQ_TEXT_MODEL`. If nothing was selected, your instruction is treated as a request to generate new text instead.
 
 ### Dictionary
 
-If Whisper keeps getting a name, acronym, or product term wrong, add it to the local dictionary:
+If Whisper keeps getting a name, acronym, or product term wrong:
 
 ```
 node cli.js dict add KernAlan
@@ -159,11 +98,11 @@ node cli.js dict
 node cli.js dict remove KernAlan
 ```
 
-Dictionary terms are stored locally and used as hints during transcription and command mode.
+Terms are stored locally and used as hints during transcription and command mode. `dict suggest` will propose terms from your recent transcripts.
 
 ### CLI
 
-`npm start` launches an interactive console where you can configure the app at runtime:
+`npm start` drops you into an interactive console:
 
 ```
 whisper> help
@@ -199,7 +138,7 @@ whisper> help
   quit                       Exit
 ```
 
-You can also send one-shot commands to a running instance:
+The same commands work as one-shots against a running instance, which makes them scriptable from Stream Deck buttons or anything else:
 
 ```
 node cli.js status
@@ -207,21 +146,15 @@ node cli.js set model whisper-large-v3
 node cli.js set dictation fast
 node cli.js set wake on
 node cli.js set hotkey Ctrl+Shift+Z
-node cli.js dict add KernAlan
 node cli.js perf
-node cli.js refresh mic
-node cli.js reset settings
+node cli.js quit
 ```
 
-This works from scripts, Stream Deck buttons, or any automation tool.
+Settings changed from the window or CLI are saved and survive restarts. `.env` is still the default source; `reset settings` goes back to it.
 
-### Audio Recovery
+### Audio recovery
 
-If a transcription fails (network error, timeout, API limit), the audio is saved to a recovery folder instead of being deleted. The app retries the saved audio automatically. If that still fails, the overlay stays open with a retry button. If there is partial text, it is copied to your clipboard and you can copy it again from the overlay.
-
-Long recordings are saved as one checkpoint recovery session, so retry works on the whole recording without manual stitching. Checkpoint audio is removed after successful insertion. Failed audio is bounded by session count, age, and total bytes; successful short-dictation audio is not retained.
-
-To list and retry saved recordings:
+If a transcription fails (network error, timeout, API limit), the audio is saved instead of deleted and retried automatically. If the retry fails too, the overlay stays open with a retry button, and any partial text is copied to your clipboard.
 
 ```
 whisper> recovery
@@ -232,106 +165,58 @@ whisper> retry latest
   ...
 ```
 
-The CLI is a backup path. `retry latest` works for both normal recordings and long chunked sessions. You can also retry a specific filename or session id from `recovery`.
+Long recordings are saved as a single checkpoint session, so `retry latest` handles the whole thing without manual stitching. The recovery folder is capped at 10 sessions and pruned by age and size; audio from successful short dictations isn't retained at all.
 
-The recovery folder is capped at 10 sessions. Oldest sessions are pruned automatically.
+### Diagnostics
 
-### Terminal Diagnostics
+The terminal shows the current config on startup, then logs the selected microphone, per-transcription pipeline latency (`preprocess`, `transcribe`, `polish`, `paste`, `restore`), and rolling `p50`/`p95` summaries every 10 runs. Daily logs (`app-YYYYMMDD.log`) go to the configured log directory.
 
-On startup, the terminal shows the current configuration. During usage it logs:
+### Platform notes
 
-- Selected microphone device and refresh events
-- Pipeline latency per transcription (`preprocess`, `transcribe`, `polish`, `paste`, paste chunks, `restore`)
-- Rolling performance summaries every 10 runs (`p50`/`p95`)
-- Persistent daily logs (`app-YYYYMMDD.log`) in the configured log directory
+**macOS** — grant microphone access when prompted (System Preferences > Security & Privacy > Privacy > Microphone).
 
-### Platform-Specific Notes
+**Linux** — you'll need audio libraries and `xdotool` for selection capture and text insertion:
 
-#### macOS
-- You may need to grant permission for the app to access your microphone. If prompted, allow microphone access in System Preferences > Security & Privacy > Privacy > Microphone.
-
-#### Linux
-- Ensure you have the necessary audio libraries installed. On Ubuntu or Debian-based systems, you might need to run:
-
-   ```
-   sudo apt-get install libasound2-dev
-   ```
-
-- Install `xdotool` for selection capture and text insertion:
-
-   ```
-   sudo apt-get install xdotool
-   ```
+```
+sudo apt-get install libasound2-dev xdotool
+```
 
 ## Development
-
-The main components of the application are:
-
-- `cli.js`: Terminal wrapper — interactive REPL and one-shot CLI
-- `settings.html`: Settings window
-- `src/main/main.js`: Main process orchestration + IPC wiring
-- `src/main/services/console-service.js`: Named pipe server for CLI commands
-- `src/main/services/runtime-settings-service.js`: saved runtime settings
-- `src/main/services/credential-service.js`: encrypted Groq API key persistence
-- `src/main/services/transcription-service.js`: queue/timeout/fallback transcription pipeline
-- `src/main/services/text-processing-service.js`: command-mode rewrite pipeline
-- `src/main/services/dictionary-service.js`: persistent custom dictionary
-- `src/main/services/typing-service.js`: paste injection with clipboard restore
-- `src/main/services/diagnostics-service.js`: startup and runtime terminal diagnostics
-- `src/main/ui/window-manager.js`: app window/menu management
-- `src/renderer/renderer.js`: renderer bootstrap + UX orchestration
-- `src/renderer/core/wake-controller.js`: local wake lifecycle and PCM resampling
-- `src/main/services/wake-word-service.js`: sherpa-onnx keyword detector
-- `src/renderer/settings.js`: settings window controller
-- `src/renderer/core/`: state machine, device manager, audio engine, recorder controller
-- `src/shared/config.js`: runtime config parsing and validation
-
-To modify the application:
-
-1. Make changes to the relevant files
-2. Restart the application to see the changes
-
-### Checks and Tests
 
 ```bash
 npm run check
 npm test
 ```
 
+Where things live:
+
+- `cli.js`: terminal wrapper — interactive REPL and one-shot CLI
+- `src/main/main.js`: main process orchestration + IPC wiring
+- `src/main/services/`: transcription pipeline, command-mode rewrites, dictionary, paste injection, credential storage, the named-pipe server the CLI talks to
+- `src/main/services/wake-word-service.js`: sherpa-onnx keyword detector
+- `src/renderer/renderer.js` + `src/renderer/core/`: state machine, device manager, audio engine, recorder, wake lifecycle
+- `src/renderer/settings.js` + `settings.html`: settings window
+- `src/shared/config.js`: runtime config parsing and validation
+
 ## Building
 
-To build the application for distribution:
+```
+npm run build
+```
 
-   ```
-   npm run build
-   ```
-
-The packaged application includes the small Apache-2.0 English wake model as an external resource so the native detector can read it without writing model data into the user profile.
-
-This will create distributable packages for your platform in the `dist` folder.
+Packages for your platform land in `dist`. The build bundles the small Apache-2.0 English wake model as an external resource so the native detector can read it without writing model data into the user profile.
 
 ## Troubleshooting
 
-If you encounter any issues with audio recording or transcription:
-
-1. Ensure your microphone is properly connected and selected as the default input device
-2. Check the console logs for any error messages
-3. Verify that your Groq API key is correctly set in the `.env` file
-4. If Windows selects the wrong Bluetooth microphone, start speaking once after connecting your device. The app auto-refreshes its mic selection when devices change.
-5. If the CLI can't connect, make sure the app is running (`npm start` or `npm run dev`).
+- Check the terminal logs first — most failures show up there with a reason.
+- If Windows grabs the wrong Bluetooth microphone, just start speaking once after connecting; the app refreshes its mic selection when devices change.
+- If the CLI can't connect, the app probably isn't running (`npm start` or `npm run dev`).
+- Transcription errors usually mean the Groq API key is missing or wrong.
 
 ## Roadmap
 
-The following are ideas for future development:
-
-- Allow for using different providers (e.g. OpenAI or self-host)
-- Make the UI more customizable
-- Add a feature to save and manage transcription history
-- Develop a mobile companion app for remote control and syncing
-- Implement advanced audio processing for noise reduction and speaker separation
-
-This was done in a weekend, so I don't have any specific plans to implement any of these yet.
+Maybe other providers (OpenAI, self-hosted Whisper), maybe transcription history. This was a weekend project, so no promises.
 
 ## License
 
-This project is licensed under the Apache License 2.0. See the LICENSE file for details.
+Apache License 2.0. See the LICENSE file for details.

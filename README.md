@@ -12,7 +12,7 @@ Push-to-talk dictation for your desktop. Hit a hotkey, talk, and the transcript 
 
 These always point to the latest release. You bring your own Groq API key. Enter it in **Settings** after installing.
 
-![Whisper Desktop demo](https://github.com/KernAlan/whisper-desktop/assets/63753020/b8232278-ece9-4f53-a34a-3354be0bcc01)
+![Whisper Desktop demo](docs/demo.gif)
 
 ## What it does
 

@@ -17,6 +17,7 @@ const MUTABLE_KEYS = [
   "clipboardRestoreDelayMs",
   "pasteChunkChars",
   "pasteChunkDelayMs",
+  "wakePhraseEnabled",
 ];
 const SETTINGS_VERSION = 3;
 const LEGACY_DEFAULT_TIMEOUT_MS = 10000;
@@ -42,6 +43,7 @@ function createRuntimeDefaults(config) {
     clipboardRestoreDelayMs: config.app.clipboardRestoreDelayMs,
     pasteChunkChars: config.app.pasteChunkChars,
     pasteChunkDelayMs: config.app.pasteChunkDelayMs,
+    wakePhraseEnabled: config.app.wakePhraseEnabled,
   };
 }
 
@@ -123,6 +125,10 @@ function applyRuntimeSettings(current, payload = {}) {
   const pasteChunkDelayMs = cleanNumber(payload.pasteChunkDelayMs);
   if (pasteChunkDelayMs !== null && pasteChunkDelayMs >= 10) {
     next.pasteChunkDelayMs = pasteChunkDelayMs;
+  }
+
+  if (typeof payload.wakePhraseEnabled === "boolean") {
+    next.wakePhraseEnabled = payload.wakePhraseEnabled;
   }
 
   return next;

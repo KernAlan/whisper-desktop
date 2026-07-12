@@ -34,10 +34,12 @@ export class RecorderController {
     updatePreview,
     updateRecoveryActions,
     onDiagnostics,
+    onStateChange,
     segmentMinMs = 20000,
     segmentMaxMs = 40000,
     segmentSilenceMs = 700,
     segmentMonitorMs = 100,
+    wakeInitialTimeoutMs = 8000,
   }) {
     this.audioEngine = audioEngine;
     this.minRecordingDurationMs = minRecordingDurationMs;
@@ -65,6 +67,7 @@ export class RecorderController {
     this.updatePreview = typeof updatePreview === "function" ? updatePreview : () => {};
     this.updateRecoveryActions = typeof updateRecoveryActions === "function" ? updateRecoveryActions : () => {};
     this.onDiagnostics = typeof onDiagnostics === "function" ? onDiagnostics : () => {};
+    this.onStateChange = typeof onStateChange === "function" ? onStateChange : () => {};
 
     this.mediaRecorder = null;
     this.audioChunks = [];
@@ -88,6 +91,11 @@ export class RecorderController {
     this.previewRequestActive = false;
     this.recordingStream = null;
     this.recordingStopRequested = false;
+    this.wakeRecording = false;
+    this.wakeSpeechStartedAt = 0;
+    this.wakeLastSpeechAt = 0;
+    this.wakeDiscardRequested = false;
+    this.wakeInitialTimeoutMs = wakeInitialTimeoutMs;
     this.segmentMinMs = segmentMinMs;
     this.segmentMaxMs = segmentMaxMs;
     this.segmentSilenceMs = segmentSilenceMs;
@@ -112,6 +120,9 @@ export class RecorderController {
     this.cancelledRecoveryRetryIds = new Set();
     this.stateMachine = new RecorderStateMachine(({ next, detail }) => {
       if (next === STATES.ERROR) this.updateStatus(detail || "Error", "red");
+      Promise.resolve(this.onStateChange(next, detail)).catch((error) => {
+        console.warn("Recorder state listener failed:", error);
+      });
     });
   }
 
@@ -172,8 +183,12 @@ export class RecorderController {
     return this.startRecording(options);
   }
 
-  async startRecording({ mode = "dictation", selectedText = "", selection, dictationMode, targetContext, targetCaptureId } = {}) {
+  async startRecording({ mode = "dictation", selectedText = "", selection, dictationMode, targetContext, targetCaptureId, wakeActivated = false } = {}) {
     try {
+      this.wakeRecording = Boolean(wakeActivated);
+      this.wakeSpeechStartedAt = 0;
+      this.wakeLastSpeechAt = 0;
+      this.wakeDiscardRequested = false;
       this.mode = mode === "command" ? "command" : "dictation";
       if (dictationMode) this.setDictationMode(dictationMode);
       this.selection = selection && typeof selection === "object"
@@ -224,6 +239,10 @@ export class RecorderController {
       this.startRecordingStatusLoop();
     } catch (error) {
       await this._releaseAudioStream("start failure");
+      this.wakeRecording = false;
+      this.wakeSpeechStartedAt = 0;
+      this.wakeLastSpeechAt = 0;
+      this.wakeDiscardRequested = false;
       console.error(`Error starting recording: ${formatError(error)}`);
       const status = microphoneStatusForError(error);
       this.updatePreview(userMessageForFailure(error, status), {
@@ -331,12 +350,36 @@ export class RecorderController {
   async _finishRecording() {
     if (this.segmentRotationPromise) await this.segmentRotationPromise;
     const finalChunks = await this._closeMediaRecorderSegment();
+    if (this.wakeDiscardRequested) {
+      await this._releaseAudioStream("wake phrase timeout");
+      this.mediaRecorder = null;
+      this.audioChunks = [];
+      this.recordingStream = null;
+      this.recordingStopRequested = false;
+      this.wakeRecording = false;
+      this.wakeSpeechStartedAt = 0;
+      this.wakeLastSpeechAt = 0;
+      this.wakeDiscardRequested = false;
+      this.stopSegmentMonitor();
+      this.stopPreviewLoop();
+      this.stopRecordingStatusLoop();
+      this.updateRecoveryActions(null);
+      this.updateStatus("Ready", "black");
+      this.updatePreview("", { phase: "idle" });
+      this.stateMachine.transition(STATES.IDLE, "Wake phrase timeout");
+      if (this.scheduleHideWindow) {
+        this.scheduleHideWindow(this.doneHideWindowMs).catch((error) => {
+          console.warn("Failed to schedule window hide:", error);
+        });
+      }
+      return;
+    }
     await this.handleRecordingStop(finalChunks);
   }
 
   startSegmentMonitor() {
     this.stopSegmentMonitor();
-    if (!this.transcribeCheckpoint) return;
+    if (!this.transcribeCheckpoint && !this.wakeRecording) return;
     this.segmentMonitorTimer = setInterval(() => this._monitorSegment(), this.segmentMonitorMs);
   }
 
@@ -351,6 +394,19 @@ export class RecorderController {
     if (this.recordingStopRequested || this.segmentRotationPromise || this.getState() !== STATES.RECORDING) return;
     const elapsed = now - this.segmentStartedAt;
     const silent = this._isInputSilent();
+    if (this.wakeRecording) {
+      if (!silent) {
+        if (!this.wakeSpeechStartedAt) this.wakeSpeechStartedAt = now;
+        this.wakeLastSpeechAt = now;
+      }
+
+      if (!this.wakeSpeechStartedAt && elapsed >= this.wakeInitialTimeoutMs) {
+        this.wakeDiscardRequested = true;
+        this.stopRecording();
+        return;
+      }
+    }
+
     if (silent) {
       if (!this.segmentSilenceStartedAt) this.segmentSilenceStartedAt = now;
     } else {
@@ -773,6 +829,10 @@ export class RecorderController {
       this.audioChunks = [];
       this.recordingStream = null;
       this.recordingStopRequested = false;
+      this.wakeRecording = false;
+      this.wakeSpeechStartedAt = 0;
+      this.wakeLastSpeechAt = 0;
+      this.wakeDiscardRequested = false;
       this.stopSegmentMonitor();
       this.stopPreviewLoop();
       this.stopRecordingStatusLoop();

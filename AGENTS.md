@@ -42,7 +42,7 @@ The primary flow is:
 
 1. Electron registers a global shortcut in the main process.
 2. The shortcut opens the inactive overlay without taking focus from the target application.
-3. The renderer records microphone audio and sends one early confidence preview. Short dictations remain one final upload; long recordings rotate into standalone, silence-aware checkpoints that become stable preview text and bounded recovery data.
+3. The renderer records microphone audio and sends one early confidence preview. Short dictations remain one final upload; long recordings rotate into standalone, silence-aware checkpoints that become stable preview text and bounded recovery data. When enabled, the renderer also feeds resampled PCM to a local wake detector; ambient audio is never sent to the cloud or written to disk by that path.
 4. Audio crosses the preload IPC bridge to the main process for Groq transcription.
 5. Dictation may be polished, or command mode may transform selected text.
 6. The main process captures the initiating target asynchronously, returns focus to it, and inserts the result through the clipboard and native paste shortcuts.
@@ -64,10 +64,12 @@ Preserving the original target, user intent, clipboard contents, and recoverable
 - `src/main/services/transcript-store.js`: local transcript history and pruning.
 - `src/main/services/diagnostics-service.js`: pipeline metrics, runtime diagnostics, and dictionary suggestions.
 - `src/main/services/console-service.js`: commands accepted from the terminal CLI.
+- `src/main/services/wake-word-service.js`: local sherpa-onnx keyword spotting for the optional `Hey Whisper` activation.
 - `src/preload/preload.js`: the context-isolated API exposed to renderer windows.
 - `src/renderer/renderer.js`: overlay DOM updates, event wiring, and renderer bootstrap.
 - `src/renderer/core/recorder-controller.js`: recording state, early preview scheduling, silence-aware segment rotation, final assembly, retries, cancellation, and paste orchestration.
 - `src/renderer/core/audio-engine.js`: microphone stream and Web Audio lifecycle.
+- `src/renderer/core/wake-controller.js`: local PCM tap, resampling, wake activation, endpointing coordination, and device/resume re-arming.
 - `src/renderer/core/device-manager.js`: microphone discovery and selection.
 - `src/renderer/core/recorder-state-machine.js`: legal recorder states and transitions.
 - `src/shared/config.js`: environment defaults and startup configuration validation.
@@ -86,6 +88,7 @@ Preserving the original target, user intent, clipboard contents, and recoverable
 - Overlay presentation or interaction: change `index.html` and `renderer.js` together.
 - Settings: trace the full path through `settings.html`, `renderer/settings.js`, `runtime-settings-service.js`, and `main.js`.
 - Hotkeys, application startup, resume handling, or IPC: start in `main.js` and `preload.js`.
+- Wake phrase or local ambient-audio behavior: trace `wake-word-service.js`, `wake-controller.js`, `audio-engine.js`, and the wake IPC methods in `main.js`/`preload.js`.
 - CLI commands: change `cli.js` only for client behavior; add application commands in `console-service.js`.
 - History, logs, metrics, or vocabulary: use the corresponding service rather than adding storage logic to a renderer.
 
@@ -100,6 +103,7 @@ Preserving the original target, user intent, clipboard contents, and recoverable
 - Keep target-aware insertion fail-closed when the initiating target cannot be restored.
 - Keep renderer access behind `preload.js`; retain `contextIsolation: true` and `nodeIntegration: false`.
 - Treat transcript, clipboard, selection, and recovery data as private local user data. Do not log their full contents.
+- Keep wake detection local and opt-in. It may keep short audio only in memory; it must not upload or persist ambient audio before activation.
 - Keep configuration defaults in `src/shared/config.js` and saved runtime behavior in `runtime-settings-service.js`.
 - Add focused tests for changed failure paths, shared behavior, and lifecycle transitions.
 

@@ -29,6 +29,8 @@ export class AudioEngine {
     this.onDiagnostics = typeof onDiagnostics === "function" ? onDiagnostics : () => {};
     this.audioContext = null;
     this.analyser = null;
+    this.mediaSource = null;
+    this.pcmTap = null;
     this.activeStream = null;
     this.activeDevice = null;
   }
@@ -102,7 +104,14 @@ export class AudioEngine {
       this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
       this.analyser = this.audioContext.createAnalyser();
       const source = this.audioContext.createMediaStreamSource(this.activeStream);
+      this.mediaSource = source;
       source.connect(this.analyser);
+      if (this.audioContext.state === "suspended") {
+        if (typeof this.audioContext.resume !== "function") {
+          throw new Error("The local audio context could not be resumed.");
+        }
+        await this.audioContext.resume();
+      }
     } catch (error) {
       await this.releaseStream();
       throw error;
@@ -112,11 +121,13 @@ export class AudioEngine {
   }
 
   async releaseStream() {
+    this.stopPcmTap();
     if (this.activeStream) {
       this.activeStream.getTracks().forEach((track) => track.stop());
       this.activeStream = null;
     }
     this.analyser = null;
+    this.mediaSource = null;
 
     if (this.audioContext && this.audioContext.state !== "closed") {
       const context = this.audioContext;
@@ -129,6 +140,39 @@ export class AudioEngine {
 
   getAnalyser() {
     return this.analyser;
+  }
+
+  startPcmTap(onSamples) {
+    this.stopPcmTap();
+    if (!this.audioContext || !this.mediaSource || typeof onSamples !== "function") {
+      throw new Error("Audio stream is not ready for local audio processing.");
+    }
+    if (typeof this.audioContext.createScriptProcessor !== "function") {
+      throw new Error("This platform does not expose a local PCM audio tap.");
+    }
+
+    const processor = this.audioContext.createScriptProcessor(4096, 1, 1);
+    const mute = this.audioContext.createGain();
+    mute.gain.value = 0;
+    processor.onaudioprocess = (event) => {
+      const input = event.inputBuffer?.getChannelData?.(0);
+      if (input?.length) onSamples(new Float32Array(input));
+    };
+    this.mediaSource.connect(processor);
+    processor.connect(mute);
+    mute.connect(this.audioContext.destination);
+    this.pcmTap = { processor, mute };
+    return true;
+  }
+
+  stopPcmTap() {
+    if (!this.pcmTap) return;
+    const { processor, mute } = this.pcmTap;
+    processor.onaudioprocess = null;
+    this.mediaSource?.disconnect?.(processor);
+    processor.disconnect?.();
+    mute.disconnect?.();
+    this.pcmTap = null;
   }
 
   getActiveDevice() {

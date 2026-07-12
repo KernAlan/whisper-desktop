@@ -28,6 +28,7 @@ function defaults() {
     clipboardRestoreDelayMs: 120,
     pasteChunkChars: 1500,
     pasteChunkDelayMs: 80,
+    wakePhraseEnabled: false,
   };
 }
 
@@ -53,6 +54,12 @@ test("applyRuntimeSettings can disable command shortcut", () => {
   });
 
   assert.equal(next.commandShortcut, "off");
+});
+
+test("applyRuntimeSettings accepts the local wake phrase toggle", () => {
+  const next = applyRuntimeSettings(defaults(), { wakePhraseEnabled: true });
+
+  assert.equal(next.wakePhraseEnabled, true);
 });
 
 test("RuntimeSettingsService saves and loads mutable settings", () => {

@@ -20,7 +20,7 @@ Whisper Desktop is currently an open-source tool for people who are comfortable 
 
 - **Streaming transcription:** implemented as one early confidence preview plus persisted, silence-aware checkpoints for long sessions. Short dictations still use one final request.
 - **Tail-latency control:** timeouts and provider failures must degrade to a useful draft quickly; a rare 10-second stall damages trust more than small median improvements help it.
-- **Optional wake phrase:** keep the global shortcut as the dependable baseline, then add an optional local wake phrase for hands-free use. Do not build a collection of headset, mouse-button, foot-pedal, or external push-to-talk integrations.
+- **Optional wake phrase:** implemented as an opt-in local `Hey Whisper` detector with endpointing, no ambient cloud upload, no ambient disk writes, and the global shortcut retained as the dependable baseline. The remaining refinement is a short in-memory pre-roll if dogfooding shows first-word loss.
 - **Application compatibility:** maintain a tested matrix for terminals, browsers, Electron apps, native editors, remote desktops, and applications that reject clipboard paste.
 
 ## P2: Voice Editing
@@ -64,7 +64,7 @@ The next milestone should deliver **hands-free speed and dogfood reliability**:
 
 1. Measure and reduce stop-to-insert p95 latency, especially polish and provider tail failures.
 2. Validate checkpoint boundary quality and final assembly through regular 30-minute meeting dogfooding.
-3. Add an optional local wake phrase with in-memory pre-roll, an obvious listening state, endpointing, and immediate disable.
+3. Dogfood the local wake phrase across target applications; tune threshold, endpointing, listening-state feedback, and add a short in-memory pre-roll only if first-word loss is observed.
 4. Build and maintain a real compatibility matrix for browsers, coding agents, terminals, native editors, remote desktops, and paste-hostile controls.
 5. Add spoken correction commands such as scratch that, append this, replace the last sentence, and safe explicit submit.
 
@@ -74,7 +74,7 @@ The next milestone should deliver **hands-free speed and dogfood reliability**:
 - The only planned hands-free activation path is an optional wake phrase.
 - Wake detection must run locally. Ambient audio must not be sent to a cloud service until the wake phrase activates a recording.
 - Wake detection may keep only a short in-memory pre-roll; it must not continuously write ambient audio to disk.
-- Wake mode must include a clear listening indicator, an immediate disable control, automatic speech endpointing, and protection against accidental activation.
+- Wake mode must include a clear listening indicator, an immediate disable control, an explicit close phrase, and protection against accidental activation. The current implementation uses `Hey Whisper` to start, `Stop Whisper` to finish, and only uses a short pre-speech timeout to discard accidental activations; overlay-level listening feedback remains a dogfood refinement.
 - Hardware-specific triggers such as headset buttons, mouse buttons, foot pedals, and external push-to-talk devices are out of scope.
 - The existing live transcript preview is the primary user signal that speech is being captured; a separate waveform or audio meter is not required.
 - Bring-your-own-key is the intended open-source setup model, not a temporary commercial limitation.

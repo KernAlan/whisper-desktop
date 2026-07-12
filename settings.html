@@ -111,6 +111,21 @@
         margin: 8px 0 0;
       }
 
+      .toggle-row {
+        align-items: center;
+        color: var(--ink);
+        display: flex;
+        gap: 8px;
+        margin: 0;
+      }
+
+      .toggle-row input {
+        accent-color: var(--accent);
+        height: 16px;
+        margin: 0;
+        width: 16px;
+      }
+
       section {
         background: var(--panel);
         border: 1px solid var(--line);
@@ -325,6 +340,15 @@
               <input id="commandShortcut" spellcheck="false">
             </div>
           </div>
+        </section>
+
+        <section class="full">
+          <h2>Wake Phrase</h2>
+          <label class="toggle-row" for="wakePhraseEnabled">
+            <input id="wakePhraseEnabled" type="checkbox">
+            <span>Listen locally for "Hey Whisper"</span>
+          </label>
+          <p class="hint">The wake detector runs on this computer and does not send audio anywhere until it activates dictation.</p>
         </section>
 
         <section>

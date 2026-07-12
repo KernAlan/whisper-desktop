@@ -7,9 +7,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
   onTargetContextCaptured: (callback) => {
     ipcRenderer.on("target-context-captured", (_event, payload) => callback(payload));
   },
+  onWakeWordDetected: (callback) => {
+    ipcRenderer.on("wake-word-detected", (_event, payload) => callback(payload));
+  },
   transcribeAudio: (arrayBuffer) => ipcRenderer.invoke("transcribe-audio", arrayBuffer),
   transcribePreview: (arrayBuffer) => ipcRenderer.invoke("transcribe-preview", arrayBuffer),
   transcribeCheckpoint: (arrayBuffer, options = {}) => ipcRenderer.invoke("transcribe-checkpoint", { arrayBuffer, options }),
+  startWakeWord: (options = {}) => ipcRenderer.invoke("wake-word-start", options),
+  stopWakeWord: () => ipcRenderer.invoke("wake-word-stop"),
+  sendWakeWordFrame: (frame) => ipcRenderer.send("wake-word-frame", frame),
   transcribeAudioChunked: (arrayBuffers) => ipcRenderer.invoke("transcribe-audio-chunked", arrayBuffers),
   retryRecovery: (target, options = {}) => ipcRenderer.invoke("retry-recovery", { target, ...options }),
   deleteRecovery: (target) => ipcRenderer.invoke("delete-recovery", target),

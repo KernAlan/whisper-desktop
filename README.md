@@ -2,6 +2,16 @@
 
 Whisper Desktop is an Electron-based application that allows users to transcribe speech to text using OpenAI's Whisper model through the Groq API. It provides a simple interface for recording audio and automatically transcribing it into text, which can then be inserted into any active text input field.
 
+## Download
+
+<p align="center">
+  <a href="https://github.com/KernAlan/whisper-desktop/releases/latest/download/Whisper-Desktop-Windows-Setup.exe"><img src="https://img.shields.io/badge/Download-Windows-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Download for Windows"></a>
+  <a href="https://github.com/KernAlan/whisper-desktop/releases/latest/download/Whisper-Desktop-macOS-Apple-Silicon.dmg"><img src="https://img.shields.io/badge/Download-macOS_Apple_Silicon-111111?style=for-the-badge&logo=apple&logoColor=white" alt="Download for macOS Apple Silicon"></a>
+  <a href="https://github.com/KernAlan/whisper-desktop/releases/latest/download/Whisper-Desktop-macOS-Intel.dmg"><img src="https://img.shields.io/badge/Download-macOS_Intel-111111?style=for-the-badge&logo=apple&logoColor=white" alt="Download for macOS Intel"></a>
+</p>
+
+The buttons above always point to the latest GitHub release. The app uses your own Groq API key; after installation, enter it in **Settings**.
+
 ![ezgif com-video-to-gif-converter](https://github.com/KernAlan/whisper-desktop/assets/63753020/b8232278-ece9-4f53-a34a-3354be0bcc01)
 
 Tl;dr With the magic that is Whisper and the speed of the Groq servers, I thought I'd spend a weekend to make a tool to help me speak globally into my computer. 
@@ -9,6 +19,7 @@ Tl;dr With the magic that is Whisper and the speed of the Groq servers, I though
 ## Features
 
 - Global hotkey (Ctrl+Shift+Space) to start/stop recording
+- Optional local "Hey Whisper" wake phrase for hands-free dictation
 - Command hotkey (Ctrl+Shift+E) to rewrite selected text by voice
 - Real-time audio recording using the system microphone
 - Early live preview followed by stable long-session checkpoints
@@ -57,6 +68,7 @@ Tl;dr With the magic that is Whisper and the speed of the Groq servers, I though
    APP_MEDIARECORDER_TIMESLICE_MS=150
    APP_PREVIEW_INTERVAL_MS=2500
    APP_DICTATION_MODE=polished
+   APP_WAKE_PHRASE_ENABLED=false
    APP_PASTE_CHUNK_CHARS=1500
    APP_PASTE_CHUNK_DELAY_MS=80
    APP_CLIPBOARD_RESTORE_MODE=deferred
@@ -88,6 +100,8 @@ Tl;dr With the magic that is Whisper and the speed of the Groq servers, I though
 5. The transcribed text will be automatically inserted into the active text input field
 
 By default, dictation is lightly polished before paste. It should preserve content words and only drop obvious filler/speech artifacts. Set `APP_DICTATION_MODE=fast` or run `set dictation fast` if you want raw Whisper output with less latency.
+
+For hands-free use, enable **Wake Phrase** in Settings or run `node cli.js set wake on`. The local detector listens for `Hey Whisper` on the selected microphone, then opens dictation. Say `Stop Whisper` to finish; pauses are preserved, and a short pre-speech timeout only cancels accidental activations. Ambient audio stays local and in memory until activation; the normal Groq transcription request starts only after speech is captured. Disable it with `node cli.js set wake off` or from Settings. The keyboard shortcut remains available as the dependable manual fallback.
 
 Short dictations use one final transcription request. Longer recordings are persisted and transcribed as standalone, silence-aware checkpoints, then assembled before polishing. Polishing runs in text chunks up to `GROQ_POLISH_CHUNK_WORDS`; recordings over `GROQ_POLISH_MAX_WORDS` paste the raw transcript.
 
@@ -157,6 +171,7 @@ whisper> help
   set model <name>           Change transcription model
   set text-model <name>      Change cleanup/command text model
   set dictation <mode>       fast | polished
+  set wake <on|off>          Enable or disable the local wake phrase
   set hotkey <combo>         Change global shortcut
   set command-hotkey <combo> Change command-mode shortcut
   set injection <mode>       deferred | blocking | off
@@ -190,6 +205,7 @@ You can also send one-shot commands to a running instance:
 node cli.js status
 node cli.js set model whisper-large-v3
 node cli.js set dictation fast
+node cli.js set wake on
 node cli.js set hotkey Ctrl+Shift+Z
 node cli.js dict add KernAlan
 node cli.js perf
@@ -264,6 +280,8 @@ The main components of the application are:
 - `src/main/services/diagnostics-service.js`: startup and runtime terminal diagnostics
 - `src/main/ui/window-manager.js`: app window/menu management
 - `src/renderer/renderer.js`: renderer bootstrap + UX orchestration
+- `src/renderer/core/wake-controller.js`: local wake lifecycle and PCM resampling
+- `src/main/services/wake-word-service.js`: sherpa-onnx keyword detector
 - `src/renderer/settings.js`: settings window controller
 - `src/renderer/core/`: state machine, device manager, audio engine, recorder controller
 - `src/shared/config.js`: runtime config parsing and validation
@@ -287,6 +305,8 @@ To build the application for distribution:
    ```
    npm run build
    ```
+
+The packaged application includes the small Apache-2.0 English wake model as an external resource so the native detector can read it without writing model data into the user profile.
 
 This will create distributable packages for your platform in the `dist` folder.
 

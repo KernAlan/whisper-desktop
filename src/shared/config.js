@@ -9,6 +9,15 @@ function toMs(value, fallback) {
   return parsed;
 }
 
+function toBool(value, fallback) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    if (["1", "true", "yes", "on"].includes(value.trim().toLowerCase())) return true;
+    if (["0", "false", "no", "off"].includes(value.trim().toLowerCase())) return false;
+  }
+  return fallback;
+}
+
 function maskApiKey(key) {
   if (!key) return "missing";
   if (key.length <= 8) return "***";
@@ -32,6 +41,7 @@ function loadConfig(env = process.env) {
       clipboardRestoreDelayMs: toMs(env.APP_CLIPBOARD_RESTORE_DELAY_MS, 120),
       pasteChunkChars: toInt(env.APP_PASTE_CHUNK_CHARS, 1500),
       pasteChunkDelayMs: toMs(env.APP_PASTE_CHUNK_DELAY_MS, 80),
+      wakePhraseEnabled: toBool(env.APP_WAKE_PHRASE_ENABLED, false),
     },
     shortcut: env.APP_HOTKEY || "CommandOrControl+Shift+Space",
     commandShortcut: env.APP_COMMAND_HOTKEY || "CommandOrControl+Shift+E",

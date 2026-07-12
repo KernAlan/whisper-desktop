@@ -22,6 +22,7 @@ const { DictionaryService } = require("./services/dictionary-service");
 const { TextProcessingService } = require("./services/text-processing-service");
 const { CredentialService } = require("./services/credential-service");
 const { TargetContextService } = require("./services/target-context-service");
+const { WakeWordService } = require("./services/wake-word-service");
 const {
   RuntimeSettingsService,
   createRuntimeDefaults,
@@ -68,6 +69,57 @@ const credentialService = new CredentialService({
   logger,
 });
 const targetContextService = new TargetContextService({ logger });
+const wakeModelDir = app.isPackaged
+  ? path.join(process.resourcesPath, "wake")
+  : path.join(__dirname, "assets", "wake");
+
+async function handleWakeWordDetected(payload) {
+  if (payload?.mode === "close") {
+    BrowserWindow.getAllWindows().forEach((window) => {
+      window.webContents.send("wake-word-detected", {
+        keyword: payload?.keyword || "Stop Whisper",
+        mode: "close",
+      });
+    });
+    return;
+  }
+
+  const targetCaptureId = randomUUID();
+  const targetContextPromise = targetContextService.capture();
+  windowManager.showWindow({ autoHide: false });
+  BrowserWindow.getAllWindows().forEach((window) => {
+    window.webContents.send("wake-word-detected", {
+      keyword: payload?.keyword || "Hey Whisper",
+      mode: "wake",
+      targetCaptureId,
+    });
+  });
+
+  try {
+    const targetContext = await targetContextPromise;
+    BrowserWindow.getAllWindows().forEach((window) => {
+      window.webContents.send("target-context-captured", { targetCaptureId, targetContext });
+    });
+  } catch (error) {
+    logger.warn(`[Wake] Target capture failed: ${error?.message || error}`);
+    BrowserWindow.getAllWindows().forEach((window) => {
+      window.webContents.send("target-context-captured", {
+        targetCaptureId,
+        targetContext: null,
+      });
+    });
+  }
+}
+
+const wakeWordService = new WakeWordService({
+  modelDir: wakeModelDir,
+  logger,
+  onDetected: (payload) => {
+    handleWakeWordDetected(payload).catch((error) => {
+      logger.error(`[Wake] Activation failed: ${error?.message || error}`);
+    });
+  },
+});
 let activeApiKey = config.transcription.apiKey;
 let apiKeySource = activeApiKey ? "environment" : "missing";
 const transcriptionService = new TranscriptionService({
@@ -104,19 +156,27 @@ function isShortcutDisabled(shortcut) {
 }
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
-if (!hasSingleInstanceLock) {
-  // New instance couldn't get the lock — the old instance will receive
-  // 'second-instance' and quit. Wait for it, then retry.
-  console.log("Waiting for previous instance to exit...");
-  setTimeout(() => {
-    const retry = app.requestSingleInstanceLock();
-    if (!retry) {
-      console.error("Could not take over from previous instance.");
-      app.exit(1);
-    }
-    // Lock acquired — continue boot normally
-  }, 1500);
-}
+const singleInstanceLockReady = hasSingleInstanceLock
+  ? Promise.resolve(true)
+  : new Promise((resolve) => {
+      // The existing instance exits on second-instance. Do not create a window
+      // or register shortcuts until this process actually owns the lock.
+      console.log("Waiting for previous instance to exit...");
+      const deadline = Date.now() + 5000;
+      const retry = () => {
+        if (app.requestSingleInstanceLock()) {
+          resolve(true);
+          return;
+        }
+        if (Date.now() >= deadline) {
+          console.error("Could not take over from previous instance.");
+          resolve(false);
+          return;
+        }
+        setTimeout(retry, 250);
+      };
+      setTimeout(retry, 500);
+    });
 
 function setupShortcut() {
   globalShortcut.unregisterAll();
@@ -172,6 +232,7 @@ function setupShortcut() {
   if (dictationOk) {
     shortcutRegistration.shortcutOk = true;
     shortcutRegistration.registeredShortcut = runtimeSettings.shortcut;
+    logger.log(`[Shortcut] Dictation registered: ${runtimeSettings.shortcut}`);
   } else {
     logger.error(`Failed to register global shortcut: ${runtimeSettings.shortcut}`);
   }
@@ -286,6 +347,7 @@ function applySettings(payload, { persist = true } = {}) {
 
   Object.assign(runtimeSettings, applyRuntimeSettings(runtimeSettings, payload));
   syncRuntimeServices();
+  if (!runtimeSettings.wakePhraseEnabled) wakeWordService.stop();
   if (persist) runtimeSettingsService.saveSync(runtimeSettings);
 }
 
@@ -293,6 +355,7 @@ function resetSettings() {
   Object.keys(runtimeSettings).forEach((key) => delete runtimeSettings[key]);
   Object.assign(runtimeSettings, runtimeSettingsService.resetSync());
   syncRuntimeServices();
+  if (!runtimeSettings.wakePhraseEnabled) wakeWordService.stop();
 }
 
 const consoleService = new ConsoleService({
@@ -314,6 +377,7 @@ const consoleService = new ConsoleService({
   transcriptionService,
   transcriptStore,
   dictionaryService,
+  wakeWordService,
   openSettings: () => windowManager.showSettingsWindow(),
 });
 
@@ -362,6 +426,7 @@ function getRuntimeConfigPayload() {
     clipboardRestoreDelayMs: runtimeSettings.clipboardRestoreDelayMs,
     pasteChunkChars: runtimeSettings.pasteChunkChars,
     pasteChunkDelayMs: runtimeSettings.pasteChunkDelayMs,
+    wakePhraseEnabled: runtimeSettings.wakePhraseEnabled,
     dictionaryTerms: dictionaryService.list(),
     apiKeyOk: Boolean(activeApiKey),
     credential: getCredentialStatus(),
@@ -412,6 +477,11 @@ async function checkAndRequestMicrophonePermission() {
 }
 
 app.on("ready", async () => {
+  if (!(await singleInstanceLockReady)) {
+    app.exit(1);
+    return;
+  }
+
   const savedApiKey = credentialService.loadApiKey();
   if (savedApiKey) setActiveApiKey(savedApiKey, "secure storage");
   diagnostics.printStartup({
@@ -475,6 +545,21 @@ ipcMain.handle("transcribe-audio", async (_event, arrayBuffer) => {
 ipcMain.handle("transcribe-preview", async (_event, arrayBuffer) => {
   return transcriptionService.transcribePreview(arrayBuffer);
 });
+
+ipcMain.handle("wake-word-start", (_event, options = {}) => {
+  try {
+    return wakeWordService.start(options);
+  } catch (error) {
+    logger.error(`[Wake] Could not start local detector: ${error?.message || error}`);
+    return {
+      ...wakeWordService.getStatus(),
+      error: error?.message || "Local wake detector unavailable",
+    };
+  }
+});
+
+ipcMain.handle("wake-word-stop", () => wakeWordService.stop());
+ipcMain.on("wake-word-frame", (_event, frame) => wakeWordService.processFrame(frame));
 
 ipcMain.handle("transcribe-checkpoint", async (_event, { arrayBuffer, options } = {}) => {
   try {

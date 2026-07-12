@@ -5,6 +5,7 @@ import {
 } from "./core/device-manager.js";
 import { AudioEngine } from "./core/audio-engine.js";
 import { RecorderController, STATES } from "./core/recorder-controller.js";
+import { WakeController } from "./core/wake-controller.js";
 import {
   formatError,
   microphoneStatusForError,
@@ -14,7 +15,10 @@ import {
 
 const MIN_RECORDING_DURATION_MS = 100;
 let controller;
+let wakeController;
 let runtimeConfig = null;
+let wakeRuntimeStatus = { enabled: false, armed: false };
+const pendingTargetContexts = new Map();
 
 function updateStatus(message, color) {
   const statusElement = document.getElementById("status");
@@ -58,8 +62,15 @@ function renderRuntimeConfig(config) {
     : config.commandShortcutOk === false
     ? "Command shortcut unavailable"
     : `${platformShortcutDisplay(config.registeredCommandShortcut || config.commandShortcut)} edits selection`;
+  const wakeLabel = !config.wakePhraseEnabled
+    ? "off"
+    : wakeRuntimeStatus.error
+      ? "unavailable"
+      : wakeRuntimeStatus.armed
+        ? "listening"
+        : "starting";
   if (runtimeInfo) {
-    runtimeInfo.textContent = `ASR: ${config.model} | Text: ${config.textModel} | Dictation: ${config.dictationMode} | Dictionary: ${(config.dictionaryTerms || []).length}`;
+    runtimeInfo.textContent = `ASR: ${config.model} | Text: ${config.textModel} | Dictation: ${config.dictationMode} | Dictionary: ${(config.dictionaryTerms || []).length} | Wake: ${wakeLabel}`;
   }
   if (hotkeyHint) {
     hotkeyHint.textContent = commandShortcut
@@ -74,6 +85,11 @@ function applyRuntimeConfig(config) {
     controller.setPreviewIntervalMs(config.previewIntervalMs);
     controller.setDoneHideWindowMs(config.doneHideWindowMs);
     controller.setDictationMode(config.dictationMode);
+  }
+  if (wakeController && typeof config.wakePhraseEnabled === "boolean") {
+    wakeController.setEnabled(config.wakePhraseEnabled).catch((error) => {
+      console.error(`Wake phrase setting failed: ${formatError(error)}`);
+    });
   }
 }
 
@@ -248,6 +264,15 @@ async function refreshMicSelection({ requestAccess = true } = {}) {
       label: device.label,
       deviceId: device.id,
     });
+    if (
+      wakeController?.enabled &&
+      ![STATES.ARMING, STATES.RECORDING, STATES.TRANSCRIBING, STATES.PASTING].includes(controller.getState())
+    ) {
+      const wakeStatus = await wakeController.rearm();
+      if (wakeStatus?.error) {
+        sendDiagnostics({ type: "wake-status", status: "error", error: wakeStatus.error });
+      }
+    }
     return { ok: true, label: device.label, deviceId: device.id };
   } catch (error) {
     const errorText = formatError(error);
@@ -319,13 +344,57 @@ async function testMicrophone() {
 }
 
 async function boot() {
-  const runtimeConfig = await window.electronAPI.getRuntimeConfig();
+  runtimeConfig = await window.electronAPI.getRuntimeConfig();
   const isMac = navigator.platform.toLowerCase().includes("mac");
   applyRuntimeConfig(runtimeConfig);
   const audioEngine = new AudioEngine({
     chooseDevice: chooseBestAudioInputDevice,
     setPreferredDeviceId,
     onDiagnostics: sendDiagnostics,
+  });
+
+  wakeController = new WakeController({
+    audioEngine,
+    requestMicrophoneAccess: () => window.electronAPI.requestMicrophoneAccess(),
+    startWakeWord: (options) => window.electronAPI.startWakeWord(options),
+    stopWakeWord: () => window.electronAPI.stopWakeWord(),
+    sendWakeWordFrame: (frame) => window.electronAPI.sendWakeWordFrame(frame),
+    isRecorderBusy: () => {
+      const state = controller?.getState?.();
+      return Boolean(state && ![STATES.IDLE, STATES.ERROR].includes(state));
+    },
+    onWakeWord: async (payload = {}) => {
+      if (!controller || controller.getState() !== STATES.IDLE) return;
+      const targetCaptureId = String(payload.targetCaptureId || "");
+      const targetContext = pendingTargetContexts.get(targetCaptureId) || null;
+      pendingTargetContexts.delete(targetCaptureId);
+      await controller.startRecording({
+        mode: "dictation",
+        dictationMode: runtimeConfig?.dictationMode,
+        wakeActivated: true,
+        targetCaptureId,
+        targetContext,
+      });
+    },
+    onClosePhrase: async () => {
+      if (controller?.getState() === STATES.RECORDING) {
+        await controller.stopRecording();
+      }
+    },
+    onStatus: (status) => {
+      wakeRuntimeStatus = status;
+      if (runtimeConfig) renderRuntimeConfig(runtimeConfig);
+      sendDiagnostics({
+        type: "wake-status",
+        enabled: Boolean(status.enabled),
+        armed: Boolean(status.armed),
+        waiting: Boolean(status.waiting),
+        error: status.error || "",
+      });
+      if (status.error) {
+        updateStatus(`Wake phrase unavailable: ${status.error}`, "red");
+      }
+    },
   });
 
   controller = new RecorderController({
@@ -355,11 +424,13 @@ async function boot() {
     updatePreview,
     updateRecoveryActions,
     onDiagnostics: sendDiagnostics,
+    onStateChange: (state, detail) => wakeController.handleRecorderState(state, STATES, detail),
   });
   controller.setPreviewIntervalMs(runtimeConfig.previewIntervalMs);
   controller.setDictationMode(runtimeConfig.dictationMode);
 
   window.addEventListener("beforeunload", () => {
+    wakeController?.disarm().catch(() => {});
     const release = controller.audioEngine.releaseStream?.();
     if (release && typeof release.catch === "function") {
       release.catch(() => {});
@@ -368,6 +439,7 @@ async function boot() {
 
   try {
     await controller.initialize();
+    await wakeController.setEnabled(Boolean(runtimeConfig.wakePhraseEnabled));
     if (runtimeConfig.apiKeyOk === false) {
       updateStatus("API key missing", "red");
       updatePreview("Set GROQ_API_KEY before recording.", { phase: "error" });
@@ -425,7 +497,20 @@ async function boot() {
   });
 
   window.electronAPI.onTargetContextCaptured?.((payload = {}) => {
-    controller.setTargetContext(payload.targetCaptureId, payload.targetContext);
+    const handled = controller.setTargetContext(payload.targetCaptureId, payload.targetContext);
+    if (!handled && payload.targetCaptureId) {
+      pendingTargetContexts.set(String(payload.targetCaptureId), payload.targetContext || null);
+      while (pendingTargetContexts.size > 10) {
+        pendingTargetContexts.delete(pendingTargetContexts.keys().next().value);
+      }
+    }
+  });
+
+  window.electronAPI.onWakeWordDetected?.((payload = {}) => {
+    wakeController.handleWakeWord(payload).catch((error) => {
+      console.error(`Wake activation failed: ${formatError(error)}`);
+      updateStatus("Wake activation failed", "red");
+    });
   });
 
   document.getElementById("retryRecovery")?.addEventListener("click", () => {

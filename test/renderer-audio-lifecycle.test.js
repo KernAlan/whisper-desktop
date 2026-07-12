@@ -47,10 +47,10 @@ function createStream(track, label = "Desk Mic") {
   };
 }
 
-function createAudioContextClass({ failSource = false, closedContexts = [] } = {}) {
+function createAudioContextClass({ failSource = false, closedContexts = [], initialState = "running", resumedContexts = [] } = {}) {
   return class FakeAudioContext {
     constructor() {
-      this.state = "running";
+      this.state = initialState;
       closedContexts.push(this);
     }
 
@@ -61,6 +61,11 @@ function createAudioContextClass({ failSource = false, closedContexts = [] } = {
     createMediaStreamSource() {
       if (failSource) throw new Error("source setup failed");
       return { connect() {} };
+    }
+
+    async resume() {
+      resumedContexts.push(this);
+      this.state = "running";
     }
 
     async close() {
@@ -172,6 +177,29 @@ test("AudioEngine releases capture if WebAudio setup fails after getUserMedia", 
     await assert.rejects(engine.ensureStream(), /source setup failed/);
     assert.equal(track.stopped, true);
     assert.equal(engine.activeStream, null);
+  } finally {
+    restore();
+  }
+});
+
+test("AudioEngine resumes a suspended context for local PCM processing", async () => {
+  const { AudioEngine } = await import("../src/renderer/core/audio-engine.js");
+  const resumedContexts = [];
+  const restore = installBrowserAudioStubs({
+    getUserMedia: async () => createStream(createTrack()),
+    AudioContext: createAudioContextClass({ initialState: "suspended", resumedContexts }),
+  });
+
+  try {
+    const engine = new AudioEngine({
+      chooseDevice: async () => ({ deviceId: "desk-mic", label: "Desk Mic" }),
+      setPreferredDeviceId: () => {},
+      onDiagnostics: () => {},
+    });
+
+    await engine.ensureStream();
+    assert.equal(resumedContexts.length, 1);
+    assert.equal(engine.audioContext.state, "running");
   } finally {
     restore();
   }

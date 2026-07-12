@@ -48,6 +48,8 @@ function renderConfig(nextConfig) {
       element.value = config[field];
     }
   });
+  const wakePhrase = byId("wakePhraseEnabled");
+  if (wakePhrase) wakePhrase.checked = Boolean(config.wakePhraseEnabled);
   setDictationMode(config.dictationMode);
   renderCredentialStatus(config.credential);
   renderTerms(config.dictionaryTerms || []);
@@ -171,6 +173,7 @@ async function save() {
     polishMaxWords: numberValue("polishMaxWords"),
     pasteChunkChars: numberValue("pasteChunkChars"),
     pasteChunkDelayMs: numberValue("pasteChunkDelayMs"),
+    wakePhraseEnabled: byId("wakePhraseEnabled")?.checked === true,
   };
 
   try {

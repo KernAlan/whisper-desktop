@@ -13,6 +13,7 @@ class ConsoleService {
     transcriptionService,
     transcriptStore,
     dictionaryService,
+    wakeWordService,
     openSettings,
     resetSettings,
   }) {
@@ -26,6 +27,7 @@ class ConsoleService {
     this.transcriptionService = transcriptionService;
     this.transcriptStore = transcriptStore || null;
     this.dictionaryService = dictionaryService;
+    this.wakeWordService = wakeWordService || null;
     this.openSettings = typeof openSettings === "function" ? openSettings : null;
     this.resetSettings = typeof resetSettings === "function" ? resetSettings : null;
     this._conn = null;
@@ -156,6 +158,7 @@ class ConsoleService {
       kv("set model <name>", "Change transcription model"),
       kv("set text-model <name>", "Change cleanup/command text model"),
       kv("set dictation <mode>", "fast | polished"),
+      kv("set wake <on|off>", "Enable or disable local wake phrase"),
       kv("set hotkey <combo>", "Change global shortcut"),
       kv("set command-hotkey <combo>", "Change command-mode shortcut"),
       kv("set injection <mode>", "deferred | blocking | off"),
@@ -210,6 +213,7 @@ class ConsoleService {
       kv("Timeout", `${s.timeoutMs}ms`),
       kv("Max Queue", String(s.maxQueue)),
       kv("Dictionary", `${this.dictionaryService?.list?.().length || 0} terms`),
+      kv("Wake Phrase", this.runtimeSettings.wakePhraseEnabled ? "on (Hey Whisper)" : "off"),
       "",
     ];
     this._sendLine(lines.join("\n"));
@@ -267,6 +271,18 @@ class ConsoleService {
       }
       this.applySettings({ dictationMode: value });
       this._sendLine(`  Dictation -> ${this.runtimeSettings.dictationMode}`);
+      return;
+    }
+
+    if (key === "wake" || key === "wake-phrase") {
+      const normalized = value.toLowerCase();
+      if (!["on", "off", "true", "false", "1", "0"].includes(normalized)) {
+        this._sendLine("  Wake phrase must be on or off");
+        return;
+      }
+      const enabled = ["on", "true", "1"].includes(normalized);
+      this.applySettings({ wakePhraseEnabled: enabled });
+      this._sendLine(`  Wake phrase -> ${enabled ? "on (Hey Whisper)" : "off"}`);
       return;
     }
 

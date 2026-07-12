@@ -9,6 +9,7 @@ test("loadConfig applies defaults", () => {
   assert.equal(config.app.doneHideWindowMs, 900);
   assert.equal(config.app.previewIntervalMs, 2500);
   assert.equal(config.app.dictationMode, "polished");
+  assert.equal(config.app.wakePhraseEnabled, false);
   assert.equal(config.app.pasteChunkChars, 1500);
   assert.equal(config.app.pasteChunkDelayMs, 80);
   assert.equal(config.transcription.model, "whisper-large-v3-turbo");

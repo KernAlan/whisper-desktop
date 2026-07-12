@@ -63,7 +63,7 @@ jobs:
         run: npm ci
 
       - name: Build Windows installer
-        run: npx --no-install electron-builder --win --x64
+        run: npx --no-install electron-builder --win --x64 --publish never
 
       - name: Normalize release filename
         shell: pwsh
@@ -104,7 +104,7 @@ jobs:
         run: npm ci
 
       - name: Build macOS Apple Silicon disk image
-        run: npx --no-install electron-builder --mac --arm64
+        run: npx --no-install electron-builder --mac --arm64 --publish never
 
       - name: Normalize release filename
         shell: bash
@@ -142,7 +142,7 @@ jobs:
         run: npm ci
 
       - name: Build macOS Intel disk image
-        run: npx --no-install electron-builder --mac --x64
+        run: npx --no-install electron-builder --mac --x64 --publish never
 
       - name: Normalize release filename
         shell: bash

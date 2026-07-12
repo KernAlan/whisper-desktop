@@ -10,7 +10,7 @@ Push-to-talk dictation for your desktop. Hit a hotkey, talk, and the transcript 
   <a href="https://github.com/KernAlan/whisper-desktop/releases/latest/download/Whisper-Desktop-macOS-Intel.dmg"><img src="https://img.shields.io/badge/-Download%20for%20macOS%20Intel-111111?style=for-the-badge&logo=apple&logoColor=white" alt="Download for macOS Intel"></a>
 </p>
 
-These always point to the latest release. You bring your own Groq API key — enter it in **Settings** after installing.
+These always point to the latest release. You bring your own Groq API key. Enter it in **Settings** after installing.
 
 ![Whisper Desktop demo](https://github.com/KernAlan/whisper-desktop/assets/63753020/b8232278-ece9-4f53-a34a-3354be0bcc01)
 
@@ -18,12 +18,12 @@ These always point to the latest release. You bring your own Groq API key — en
 
 - `Ctrl+Shift+Space` to dictate into whatever field your cursor is in
 - Say "Hey Whisper" for hands-free dictation, "Stop Whisper" to finish (optional, detection runs locally)
-- `Ctrl+Shift+E` to rewrite selected text by voice — "make this shorter", "turn this into bullets"
+- `Ctrl+Shift+E` to rewrite selected text by voice: "make this shorter", "turn this into bullets"
 - Optional polish pass that fixes punctuation and drops filler, or raw Whisper output if you'd rather have the speed
 - A custom dictionary so it stops butchering your name and your project's jargon
 - Long recordings get checkpointed and chunked automatically; failed ones are saved and retried instead of thrown away
 - Your clipboard is preserved across inserts, and there's an **Undo Last Insert** if a paste goes somewhere it shouldn't
-- A terminal CLI for changing models, hotkeys, and modes at runtime — plus a settings window if you don't want to memorize commands
+- A terminal CLI for changing models, hotkeys, and modes at runtime, plus a settings window if you don't want to memorize commands
 - API key stored encrypted in the OS credential store
 
 ## Running from source
@@ -73,9 +73,9 @@ A key saved through Settings takes precedence over `GROQ_API_KEY`; clear it and 
 
 Put your cursor in any text field, press `Ctrl+Shift+Space` (`Cmd+Shift+Space` on macOS), talk, and press it again. The transcript is pasted into the field you started from.
 
-By default the transcript is lightly polished before pasting — content words are preserved, obvious filler and speech artifacts are dropped. If you want raw Whisper output with less latency, set `APP_DICTATION_MODE=fast` or run `set dictation fast` in the CLI.
+By default the transcript is lightly polished before pasting: content words are preserved, obvious filler and speech artifacts are dropped. If you want raw Whisper output with less latency, set `APP_DICTATION_MODE=fast` or run `set dictation fast` in the CLI.
 
-**Wake phrase.** Enable it in Settings or with `node cli.js set wake on`, then say "Hey Whisper" to start dictating and "Stop Whisper" to finish. Detection runs locally — ambient audio stays in memory on your machine, and nothing is sent to Groq until you've actually started dictating. A short pre-speech timeout cancels accidental activations, and the hotkey still works as the manual fallback.
+**Wake phrase.** Enable it in Settings or with `node cli.js set wake on`, then say "Hey Whisper" to start dictating and "Stop Whisper" to finish. Detection runs locally. Ambient audio stays in memory on your machine, and nothing is sent to Groq until you've actually started dictating. A short pre-speech timeout cancels accidental activations, and the hotkey still works as the manual fallback.
 
 **Long recordings.** Short dictations go up as one transcription request. Longer ones are persisted and transcribed as silence-aware checkpoints, then assembled before polishing. Recordings over 20MB are split to stay under the API size limit; recordings over `GROQ_POLISH_MAX_WORDS` skip the polish pass and paste raw. Long inserts are pasted in chunks, and your clipboard is saved once and restored at the end (set `APP_CLIPBOARD_RESTORE_MODE=off` if you'd rather keep the inserted text on the clipboard).
 
@@ -83,7 +83,7 @@ By default the transcript is lightly polished before pasting — content words a
 
 1. Select text in any app
 2. Press `Ctrl+Shift+E` (`Cmd+Shift+E` on macOS)
-3. Say what you want done — "make this shorter", "turn this into bullets"
+3. Say what you want done, like "make this shorter" or "turn this into bullets"
 4. Press the hotkey again to stop
 
 The selection is replaced with the rewrite, using the model set by `GROQ_TEXT_MODEL`. If nothing was selected, your instruction is treated as a request to generate new text instead.
@@ -126,6 +126,7 @@ whisper> help
   settings                   Open settings window
   reset settings             Reset saved settings to .env/defaults
   last [n]                   Show last N transcriptions (default 1)
+  copy-last                  Copy latest saved transcript to clipboard
   last-command               Show last command-mode run
   history                    List recent transcriptions
   dict                       List dictionary terms
@@ -173,9 +174,9 @@ The terminal shows the current config on startup, then logs the selected microph
 
 ### Platform notes
 
-**macOS** — grant microphone access when prompted (System Preferences > Security & Privacy > Privacy > Microphone).
+**macOS**: grant microphone access when prompted (System Preferences > Security & Privacy > Privacy > Microphone).
 
-**Linux** — you'll need audio libraries and `xdotool` for selection capture and text insertion:
+**Linux**: you'll need audio libraries and `xdotool` for selection capture and text insertion:
 
 ```
 sudo apt-get install libasound2-dev xdotool
@@ -190,7 +191,7 @@ npm test
 
 Where things live:
 
-- `cli.js`: terminal wrapper — interactive REPL and one-shot CLI
+- `cli.js`: terminal wrapper (interactive REPL and one-shot CLI)
 - `src/main/main.js`: main process orchestration + IPC wiring
 - `src/main/services/`: transcription pipeline, command-mode rewrites, dictionary, paste injection, credential storage, the named-pipe server the CLI talks to
 - `src/main/services/wake-word-service.js`: sherpa-onnx keyword detector
@@ -208,7 +209,7 @@ Packages for your platform land in `dist`. The build bundles the small Apache-2.
 
 ## Troubleshooting
 
-- Check the terminal logs first — most failures show up there with a reason.
+- Check the terminal logs first. Most failures show up there with a reason.
 - If Windows grabs the wrong Bluetooth microphone, just start speaking once after connecting; the app refreshes its mic selection when devices change.
 - If the CLI can't connect, the app probably isn't running (`npm start` or `npm run dev`).
 - Transcription errors usually mean the Groq API key is missing or wrong.

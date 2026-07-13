@@ -12,8 +12,8 @@ class WindowManager {
   createMainWindow() {
     const preloadPath = path.join(__dirname, "..", "..", "preload", "preload.js");
     this.mainWindow = new BrowserWindow({
-      width: 360,
-      height: 300,
+      width: 380,
+      height: 344,
       show: false,
       frame: false,
       transparent: true,
@@ -39,14 +39,16 @@ class WindowManager {
 
   createSettingsWindow() {
     const preloadPath = path.join(__dirname, "..", "..", "preload", "preload.js");
+    const { workArea } = screen.getPrimaryDisplay();
     this.settingsWindow = new BrowserWindow({
       width: 760,
-      height: 720,
+      height: Math.min(1020, workArea.height - 40),
       minWidth: 680,
       minHeight: 560,
       show: false,
       title: "Whisper Desktop Settings",
-      backgroundColor: "#f5f2ea",
+      backgroundColor: "#171310",
+      autoHideMenuBar: true,
       webPreferences: {
         preload: preloadPath,
         contextIsolation: true,
@@ -99,10 +101,10 @@ class WindowManager {
     }
     const { workArea } = screen.getPrimaryDisplay();
     this.mainWindow.setBounds({
-      x: workArea.x + workArea.width - 380,
-      y: workArea.y + workArea.height - 320,
-      width: 360,
-      height: 300,
+      x: workArea.x + workArea.width - 396,
+      y: workArea.y + workArea.height - 360,
+      width: 380,
+      height: 344,
     });
     this.mainWindow.showInactive();
     this.mainWindow.moveTop();
@@ -118,10 +120,10 @@ class WindowManager {
     this.mainWindow.setAlwaysOnTop(true);
     const { workArea } = screen.getPrimaryDisplay();
     this.mainWindow.setBounds({
-      x: workArea.x + workArea.width - 380,
-      y: workArea.y + workArea.height - 320,
-      width: 360,
-      height: 300,
+      x: workArea.x + workArea.width - 396,
+      y: workArea.y + workArea.height - 360,
+      width: 380,
+      height: 344,
     });
     if (this.mainWindow.isVisible()) {
       this.mainWindow.showInactive();

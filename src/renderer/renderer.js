@@ -37,6 +37,51 @@ function sendDiagnostics(payload) {
   window.electronAPI?.sendDiagnostics?.(payload);
 }
 
+const WAVE_SILENCE_FLOOR = 0.02;
+const WAVE_GAIN = 2.5;
+const WAVE_MIN_SCALE = 0.06;
+let waveFrame = null;
+let waveTimeDomainData = null;
+
+function renderWaveformFrame() {
+  const bars = document.querySelectorAll(".wave span");
+  const analyser = controller?.audioEngine?.getAnalyser?.();
+  if (analyser && bars.length) {
+    if (!waveTimeDomainData || waveTimeDomainData.length !== analyser.fftSize) {
+      waveTimeDomainData = new Uint8Array(analyser.fftSize);
+    }
+    analyser.getByteTimeDomainData(waveTimeDomainData);
+    const sliceSize = Math.floor(waveTimeDomainData.length / bars.length);
+    bars.forEach((bar, index) => {
+      let peak = 0;
+      const start = index * sliceSize;
+      for (let i = start; i < start + sliceSize; i += 1) {
+        const amplitude = Math.abs(waveTimeDomainData[i] - 128) / 128;
+        if (amplitude > peak) peak = amplitude;
+      }
+      if (peak < WAVE_SILENCE_FLOOR) peak = 0;
+      const scale = Math.max(WAVE_MIN_SCALE, Math.min(1, peak * WAVE_GAIN));
+      bar.style.transform = `scaleY(${scale.toFixed(3)})`;
+    });
+  }
+  waveFrame = requestAnimationFrame(renderWaveformFrame);
+}
+
+function startWaveform() {
+  if (waveFrame) return;
+  waveFrame = requestAnimationFrame(renderWaveformFrame);
+}
+
+function stopWaveform() {
+  if (waveFrame) {
+    cancelAnimationFrame(waveFrame);
+    waveFrame = null;
+  }
+  document.querySelectorAll(".wave span").forEach((bar) => {
+    bar.style.transform = "";
+  });
+}
+
 function platformShortcutDisplay(shortcut) {
   if (!shortcut) return "";
   if (navigator.platform.toLowerCase().includes("mac")) {
@@ -106,6 +151,12 @@ function truncateMiddle(text, maxLength) {
 
 function updatePreview(text, { mode = "dictation", phase = "preview", selectedText = "", selection, previewParts = 0 } = {}) {
   renderMode(mode);
+  document.body.dataset.phase = phase || "idle";
+  if (phase === "recording" || phase === "preview") {
+    startWaveform();
+  } else {
+    stopWaveform();
+  }
   const previewMeta = document.getElementById("previewMeta");
   const previewText = document.getElementById("previewText");
   const selectedElement = document.getElementById("selectedText");
@@ -553,6 +604,11 @@ async function boot() {
     window.electronAPI.openSettings?.();
   });
 
+  document.getElementById("settingsButton")?.addEventListener("click", () => {
+    controller.discardRecording();
+    window.electronAPI.openSettings?.();
+  });
+
   document.getElementById("retryPaste")?.addEventListener("click", () => {
     controller.retryLastPaste().catch((error) => {
       console.error(`Retry paste failed: ${formatError(error)}`);
@@ -582,6 +638,14 @@ async function boot() {
   });
 
   document.getElementById("dismissWindow")?.addEventListener("click", () => {
+    hideHistoryPanel();
+    controller.dismissWindowNow().catch((error) => {
+      console.error(`Close failed: ${formatError(error)}`);
+      updateStatus("Close failed", "red");
+    });
+  });
+
+  document.getElementById("closeWindow")?.addEventListener("click", () => {
     hideHistoryPanel();
     controller.dismissWindowNow().catch((error) => {
       console.error(`Close failed: ${formatError(error)}`);

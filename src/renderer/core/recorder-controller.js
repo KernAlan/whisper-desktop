@@ -296,6 +296,12 @@ export class RecorderController {
     });
   }
 
+  discardRecording() {
+    if (this.getState() !== STATES.RECORDING || this.recordingStopRequested) return false;
+    this.wakeDiscardRequested = true;
+    return this.stopRecording();
+  }
+
   stopRecording() {
     if (this.getState() !== STATES.RECORDING || this.recordingStopRequested) return false;
     this.recordingStopRequested = true;

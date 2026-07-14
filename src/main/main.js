@@ -493,11 +493,6 @@ app.on("ready", async () => {
     currentConfigIssues.forEach((issue) => logger.warn(`[Config] ${issue}`));
   }
 
-  app.setLoginItemSettings({
-    openAtLogin: true,
-    openAsHidden: true,
-  });
-
   await dictionaryService.load();
   await transcriptionService.pruneRecovery();
   createAndWireMainWindow();

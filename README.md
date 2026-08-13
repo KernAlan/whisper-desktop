@@ -61,7 +61,7 @@ GROQ_TRANSCRIPTION_MODEL=whisper-large-v3-turbo
 GROQ_FALLBACK_TRANSCRIPTION_MODEL=whisper-large-v3
 GROQ_TRANSCRIPTION_TIMEOUT_MS=5000
 GROQ_TRANSCRIPTION_MAX_QUEUE=2
-GROQ_TEXT_MODEL=llama-3.1-8b-instant
+GROQ_TEXT_MODEL=openai/gpt-oss-20b
 GROQ_TEXT_TIMEOUT_MS=20000
 GROQ_POLISH_CHUNK_WORDS=450
 GROQ_POLISH_MAX_WORDS=10000
@@ -87,6 +87,8 @@ By default the transcript is lightly polished before pasting: content words are 
 4. Press the hotkey again to stop
 
 The selection is replaced with the rewrite, using the model set by `GROQ_TEXT_MODEL`. If nothing was selected, your instruction is treated as a request to generate new text instead.
+
+Cleanup and voice commands default to `openai/gpt-oss-20b`. It is a reasoning model, so the app sends `reasoning_effort: low` and `reasoning_format: hidden` to keep dictation fast and to keep the thinking out of the pasted text.
 
 ### Dictionary
 

@@ -1,5 +1,20 @@
 const Groq = require("groq-sdk");
 
+// Reasoning models spend most of their output tokens thinking. Dictation cleanup
+// needs none of that: low effort keeps latency near the old non-reasoning model,
+// and hidden format keeps the thinking out of the text we paste.
+const REASONING_MODEL_PATTERN = /gpt-oss/i;
+
+// Speech artifacts the polish prompt is allowed to remove. The content-word guard
+// ignores them on both sides so a legal cleanup is not mistaken for lost meaning.
+const FILLER_WORDS = new Set(["um", "uh", "er", "ah", "hmm", "hm", "like"]);
+const LEADING_MARKERS = new Set(["so", "well", "okay", "ok", "alright"]);
+
+function reasoningOptions(model) {
+  if (!REASONING_MODEL_PATTERN.test(String(model || ""))) return {};
+  return { reasoning_effort: "low", reasoning_format: "hidden" };
+}
+
 function withTimeout(promise, timeoutMs, message) {
   let timeoutId;
   const timeoutPromise = new Promise((_, reject) => {
@@ -55,6 +70,7 @@ class TextProcessingService {
       this.groq.chat.completions.create({
         model: this.model,
         temperature: 0.2,
+        ...reasoningOptions(this.model),
         messages: [
           {
             role: "system",
@@ -110,6 +126,7 @@ class TextProcessingService {
       this.groq.chat.completions.create({
         model: this.model,
         temperature: 0.1,
+        ...reasoningOptions(this.model),
         messages: [
           {
             role: "system",
@@ -117,7 +134,7 @@ class TextProcessingService {
               "Conservatively clean dictated speech into readable text.",
               "Do not summarize, rewrite, shorten, or change what the user said.",
               "Never remove content words.",
-              "You may remove only obvious filler words or speech artifacts such as 'um', 'uh', 'er', 'ah', repeated stutters, and standalone 'you know'.",
+              "You may remove only obvious filler words or speech artifacts such as 'um', 'uh', 'er', 'ah', repeated stutters, standalone 'you know', and a leading 'so' or 'well' that starts the dictation.",
               "Only add punctuation, capitalization, line breaks, and list formatting when clearly implied.",
               "Do not add new facts, explanations, greetings, or commentary.",
               "Return only the final text to paste.",
@@ -139,7 +156,11 @@ class TextProcessingService {
       this.logger.warn("[Polish] Output dropped content words; using raw transcript.");
       return rawText;
     }
-    if (this._wordCount(polishedText) < Math.floor(this._wordCount(rawText) * 0.85)) {
+    // Compare content words, not raw words. Removing the filler the prompt allows can
+    // cut a short dictation by well over 15% without losing anything the user said.
+    const rawContentCount = this._contentWords(rawText).length;
+    const polishedContentCount = this._contentWords(polishedText).length;
+    if (polishedContentCount < Math.floor(rawContentCount * 0.85)) {
       this.logger.warn("[Polish] Output shortened too much; using raw transcript.");
       return rawText;
     }
@@ -216,25 +237,37 @@ class TextProcessingService {
     return true;
   }
 
+  // Normalizes both sides of the comparison the same way, so the guard tolerates
+  // exactly the edits the polish prompt authorizes and nothing more. Anything the
+  // prompt does not allow the model to drop still trips the guard.
   _contentWords(text) {
-    const allowedDrops = new Set([
-      "um",
-      "uh",
-      "er",
-      "ah",
-      "hmm",
-      "hm",
-      "like",
-    ]);
-
-    return String(text || "")
+    const words = String(text || "")
       .toLowerCase()
       .split(/\s+/)
       .map((word) => word.replace(/^[^a-z0-9']+|[^a-z0-9']+$/g, ""))
-      .filter((word) => word && !allowedDrops.has(word));
+      .filter((word) => word && !FILLER_WORDS.has(word));
+
+    const withoutStandaloneFillerPhrases = [];
+    for (let i = 0; i < words.length; i += 1) {
+      if (words[i] === "you" && words[i + 1] === "know") {
+        i += 1;
+        continue;
+      }
+      withoutStandaloneFillerPhrases.push(words[i]);
+    }
+
+    const withoutStutters = withoutStandaloneFillerPhrases.filter(
+      (word, index) => word !== withoutStandaloneFillerPhrases[index - 1]
+    );
+
+    if (withoutStutters.length && LEADING_MARKERS.has(withoutStutters[0])) {
+      return withoutStutters.slice(1);
+    }
+    return withoutStutters;
   }
 }
 
 module.exports = {
   TextProcessingService,
+  reasoningOptions,
 };

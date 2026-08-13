@@ -19,10 +19,18 @@ const MUTABLE_KEYS = [
   "pasteChunkDelayMs",
   "wakePhraseEnabled",
 ];
-const SETTINGS_VERSION = 3;
+const SETTINGS_VERSION = 4;
 const LEGACY_DEFAULT_TIMEOUT_MS = 10000;
 const LEGACY_DEFAULT_PREVIEW_MS = 1500;
 const LEGACY_DEFAULT_POLISH_MAX_WORDS = 2500;
+// Groq no longer serves these (llama-3.1-8b-instant was decommissioned 2026-08-16).
+// A saved setting still pointing at one fails every polish and voice command, so
+// migrate it back to the current default.
+const RETIRED_TEXT_MODELS = new Set([
+  "llama-3.1-8b-instant",
+  "llama3-8b-8192",
+  "llama3-70b-8192",
+]);
 
 function createRuntimeDefaults(config) {
   return {
@@ -166,6 +174,12 @@ class RuntimeSettingsService {
         }
         if (saved.polishMaxWords === LEGACY_DEFAULT_POLISH_MAX_WORDS) {
           saved.polishMaxWords = this.defaults.polishMaxWords;
+        }
+        if (RETIRED_TEXT_MODELS.has(cleanString(saved.textModel))) {
+          this.logger.warn?.(
+            `[Settings] Text model ${saved.textModel} is retired; switching to ${this.defaults.textModel}.`
+          );
+          saved.textModel = this.defaults.textModel;
         }
       }
       return applyRuntimeSettings(this.defaults, saved);

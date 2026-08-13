@@ -13,7 +13,7 @@ test("loadConfig applies defaults", () => {
   assert.equal(config.app.pasteChunkChars, 1500);
   assert.equal(config.app.pasteChunkDelayMs, 80);
   assert.equal(config.transcription.model, "whisper-large-v3-turbo");
-  assert.equal(config.text.model, "llama-3.1-8b-instant");
+  assert.equal(config.text.model, "openai/gpt-oss-20b");
   assert.equal(config.text.polishChunkWords, 450);
   assert.equal(config.text.polishMaxWords, 10000);
   assert.equal(config.transcription.timeoutMs, 5000);

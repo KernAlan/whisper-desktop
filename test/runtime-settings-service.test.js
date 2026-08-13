@@ -15,7 +15,7 @@ function defaults() {
     commandShortcut: "CommandOrControl+Shift+E",
     model: "whisper-large-v3-turbo",
     fallbackModel: "whisper-large-v3",
-    textModel: "llama-3.1-8b-instant",
+    textModel: "openai/gpt-oss-20b",
     polishChunkWords: 450,
     polishMaxWords: 10000,
     timeoutMs: 5000,
@@ -135,6 +135,34 @@ test("RuntimeSettingsService migrates legacy preview and meeting polish defaults
 
   assert.equal(loaded.previewIntervalMs, 2500);
   assert.equal(loaded.polishMaxWords, 10000);
+  fs.removeSync(dir);
+});
+
+test("RuntimeSettingsService migrates a retired text model to the current default", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "whisper-settings-"));
+  const filePath = path.join(dir, "settings.json");
+  fs.writeJsonSync(filePath, { _version: 3, textModel: "llama-3.1-8b-instant" });
+  const service = new RuntimeSettingsService({
+    filePath,
+    defaults: defaults(),
+    logger: { warn() {} },
+  });
+
+  const loaded = service.loadSync();
+
+  assert.equal(loaded.textModel, "openai/gpt-oss-20b");
+  fs.removeSync(dir);
+});
+
+test("RuntimeSettingsService keeps a supported saved text model", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "whisper-settings-"));
+  const filePath = path.join(dir, "settings.json");
+  fs.writeJsonSync(filePath, { _version: 3, textModel: "llama-3.3-70b-versatile" });
+  const service = new RuntimeSettingsService({ filePath, defaults: defaults() });
+
+  const loaded = service.loadSync();
+
+  assert.equal(loaded.textModel, "llama-3.3-70b-versatile");
   fs.removeSync(dir);
 });
 

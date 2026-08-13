@@ -28,7 +28,7 @@ function loadConfig(env = process.env) {
   const transcriptionModel = env.GROQ_TRANSCRIPTION_MODEL || "whisper-large-v3-turbo";
   const fallbackTranscriptionModel =
     env.GROQ_FALLBACK_TRANSCRIPTION_MODEL || "whisper-large-v3";
-  const textModel = env.GROQ_TEXT_MODEL || "llama-3.1-8b-instant";
+  const textModel = env.GROQ_TEXT_MODEL || "openai/gpt-oss-20b";
 
   return {
     app: {

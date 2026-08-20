@@ -870,7 +870,13 @@ export class RecorderController {
         bytes,
         transcript: this.mode === "command" ? null : transcript,
         outputText: this.mode === "dictation" ? outputText : null,
-        polished: this.mode === "dictation" && this.dictationMode === "polished",
+        // Report the polish that actually happened, not the mode that was asked
+        // for. When the guard rejects a polish the raw transcript is pasted, and
+        // logging that as "Transcript polished" hid the failure completely.
+        polished:
+          this.mode === "dictation" &&
+          this.dictationMode === "polished" &&
+          outputText !== transcript,
         commandInstruction: this.mode === "command" ? transcript : null,
         commandSelectedChars: this.mode === "command" ? this.selectedText.length : null,
         commandSelectionOk: this.mode === "command" ? this.selection.ok !== false : null,
@@ -1246,9 +1252,14 @@ export class RecorderController {
         if (isCancelled()) return cancelledResult();
         if (polishedText && polishedText.trim()) {
           textToPaste = polishedText;
+          // The polish guard returns the raw transcript when it rejects a cleanup.
+          // Say so, otherwise unpolished text looks like an intermittent glitch.
+          if (polishedText === transcript) {
+            this.updateStatus("Polish rejected; inserting raw transcript", "orange");
+          }
           this.updatePreview(textToPaste, {
             mode: this.mode,
-            phase: "polished",
+            phase: polishedText === transcript ? "result" : "polished",
             selectedText: this.selectedText,
             selection: this.selection,
           });

@@ -7,8 +7,40 @@ const REASONING_MODEL_PATTERN = /gpt-oss/i;
 
 // Speech artifacts the polish prompt is allowed to remove. The content-word guard
 // ignores them on both sides so a legal cleanup is not mistaken for lost meaning.
-const FILLER_WORDS = new Set(["um", "uh", "er", "ah", "hmm", "hm", "like"]);
+// "like" is NOT here: the prompt tells the model to keep it, so a missing "like"
+// is a real edit the guard should catch.
+const FILLER_WORDS = new Set(["um", "uh", "er", "ah", "hmm", "hm"]);
 const LEADING_MARKERS = new Set(["so", "well", "okay", "ok", "alright"]);
+
+// The model writes numbers either way and the raw transcript does too, so both
+// sides normalize to digits before the words are compared.
+const NUMBER_WORDS = {
+  zero: "0", one: "1", two: "2", three: "3", four: "4", five: "5", six: "6",
+  seven: "7", eight: "8", nine: "9", ten: "10", eleven: "11", twelve: "12",
+  thirteen: "13", fourteen: "14", fifteen: "15", sixteen: "16", seventeen: "17",
+  eighteen: "18", nineteen: "19", twenty: "20", thirty: "30", forty: "40",
+  fifty: "50", sixty: "60", seventy: "70", eighty: "80", ninety: "90",
+  hundred: "100", thousand: "1000", million: "1000000",
+};
+
+// A long polish may lose this share of content words to cleanup the guard cannot
+// model exactly. There is no minimum, so short dictations are held to every word.
+// The length check in _judgePolish still catches real summarizing at any length.
+const DROP_BUDGET_RATIO = 0.02;
+const LONGEST_FALSE_START = 4;
+
+// Dictation cleanup is punctuation work, not editing. The earlier prompt asked the
+// model to "conservatively clean" the text, and gpt-oss-20b read that as licence to
+// cut discourse markers, swap synonyms, and merge sentences. That tripped the guard
+// and pasted the raw transcript instead: 19 of 32 dictations on 2026-08-20.
+const POLISH_RULES = [
+  "You punctuate dictated speech. You do not edit it.",
+  "Copy every word through in the same order. Add punctuation, capitalization, paragraph breaks, and list formatting. Fix spelling.",
+  "Delete only: 'um', 'uh', 'er', 'ah', 'hmm', and an immediately repeated word or false start.",
+  "Keep every other word, including 'right', 'yeah', 'so', 'well', 'like', 'you know', 'I mean', 'maybe', 'sort of', 'actually', 'honestly', 'and so on'.",
+  "Never reword, condense, merge, split, reorder, or drop a clause. Never swap a word for a synonym. Never add anything.",
+  "Leave rambling sentences rambling. Return only the punctuated text.",
+];
 
 function reasoningOptions(model) {
   if (!REASONING_MODEL_PATTERN.test(String(model || ""))) return {};
@@ -121,25 +153,38 @@ class TextProcessingService {
   }
 
   async _polishOne(rawText) {
+    const first = await this._requestPolish(rawText);
+    const firstVerdict = this._judgePolish(rawText, first);
+    if (firstVerdict.ok) return first;
+
+    // One retry before giving up. A rejected polish costs the user the entire
+    // cleanup, and a second pass with the rule restated recovers most of them for
+    // about 400ms. Silently pasting raw is what made this look like a race.
+    this.logger.warn(`[Polish] Attempt 1 rejected (${firstVerdict.reason}); retrying once.`);
+    const second = await this._requestPolish(rawText, firstVerdict.reason);
+    const secondVerdict = this._judgePolish(rawText, second);
+    if (secondVerdict.ok) return second;
+
+    this.logger.warn(
+      `[Polish] Attempt 2 rejected (${secondVerdict.reason}); pasting the RAW transcript unpolished.`
+    );
+    return rawText;
+  }
+
+  async _requestPolish(rawText, retryReason) {
     const dictionaryPrompt = this.dictionaryService?.buildPrompt?.() || "";
+    const retryPrompt = retryReason
+      ? "Your previous attempt changed the words. Repeat the input verbatim and only add punctuation and capitalization."
+      : "";
     const response = await withTimeout(
       this.groq.chat.completions.create({
         model: this.model,
-        temperature: 0.1,
+        temperature: 0,
         ...reasoningOptions(this.model),
         messages: [
           {
             role: "system",
-            content: [
-              "Conservatively clean dictated speech into readable text.",
-              "Do not summarize, rewrite, shorten, or change what the user said.",
-              "Never remove content words.",
-              "You may remove only obvious filler words or speech artifacts such as 'um', 'uh', 'er', 'ah', repeated stutters, standalone 'you know', and a leading 'so' or 'well' that starts the dictation.",
-              "Only add punctuation, capitalization, line breaks, and list formatting when clearly implied.",
-              "Do not add new facts, explanations, greetings, or commentary.",
-              "Return only the final text to paste.",
-              dictionaryPrompt,
-            ].filter(Boolean).join("\n"),
+            content: [...POLISH_RULES, dictionaryPrompt, retryPrompt].filter(Boolean).join("\n"),
           },
           {
             role: "user",
@@ -151,20 +196,21 @@ class TextProcessingService {
       `Dictation polishing timed out after ${this.timeoutMs}ms`
     );
 
-    const polishedText = response?.choices?.[0]?.message?.content?.trim() || rawText;
+    return response?.choices?.[0]?.message?.content?.trim() || rawText;
+  }
+
+  _judgePolish(rawText, polishedText) {
     if (!this._keepsContentWords(rawText, polishedText)) {
-      this.logger.warn("[Polish] Output dropped content words; using raw transcript.");
-      return rawText;
+      return { ok: false, reason: "dropped content words" };
     }
     // Compare content words, not raw words. Removing the filler the prompt allows can
     // cut a short dictation by well over 15% without losing anything the user said.
     const rawContentCount = this._contentWords(rawText).length;
     const polishedContentCount = this._contentWords(polishedText).length;
     if (polishedContentCount < Math.floor(rawContentCount * 0.85)) {
-      this.logger.warn("[Polish] Output shortened too much; using raw transcript.");
-      return rawText;
+      return { ok: false, reason: "shortened too much" };
     }
-    return polishedText;
+    return { ok: true };
   }
 
   _splitTextChunks(text, maxWords) {
@@ -219,19 +265,53 @@ class TextProcessingService {
     return String(text || "").trim().split(/\s+/).filter(Boolean).length;
   }
 
+  // Walks the raw content words through the polished ones in order. Tolerates the
+  // two rewrites a punctuation pass legitimately makes -- joining or splitting a
+  // compound ("line up" / "lineup") -- plus a small budget of words the model
+  // cleaned up in a way this cannot model. The length check in _judgePolish is
+  // what stops a summary: a rewrite that drops whole clauses fails there.
   _keepsContentWords(rawText, polishedText) {
     const rawWords = this._contentWords(rawText);
     const polishedWords = this._contentWords(polishedText);
+    // No floor on purpose. A short dictation gets zero tolerance, where one lost
+    // word is a real share of the meaning; a long one gets proportional slack.
+    const budget = Math.floor(rawWords.length * DROP_BUDGET_RATIO);
     let polishedIndex = 0;
+    let dropped = 0;
 
-    for (const rawWord of rawWords) {
-      while (polishedIndex < polishedWords.length && polishedWords[polishedIndex] !== rawWord) {
+    for (let i = 0; i < rawWords.length; i += 1) {
+      const rawWord = rawWords[i];
+
+      // "line up" in the raw matched by "lineup" in the polish.
+      if (
+        polishedIndex < polishedWords.length &&
+        i + 1 < rawWords.length &&
+        polishedWords[polishedIndex] === rawWord + rawWords[i + 1]
+      ) {
         polishedIndex += 1;
+        i += 1;
+        continue;
       }
-      if (polishedIndex >= polishedWords.length) {
-        return false;
+
+      // "lineup" in the raw matched by "line up" in the polish.
+      if (
+        polishedIndex + 1 < polishedWords.length &&
+        polishedWords[polishedIndex] + polishedWords[polishedIndex + 1] === rawWord
+      ) {
+        polishedIndex += 2;
+        continue;
       }
-      polishedIndex += 1;
+
+      let scan = polishedIndex;
+      while (scan < polishedWords.length && polishedWords[scan] !== rawWord) {
+        scan += 1;
+      }
+      if (scan >= polishedWords.length) {
+        dropped += 1;
+        if (dropped > budget) return false;
+        continue;
+      }
+      polishedIndex = scan + 1;
     }
 
     return true;
@@ -240,12 +320,22 @@ class TextProcessingService {
   // Normalizes both sides of the comparison the same way, so the guard tolerates
   // exactly the edits the polish prompt authorizes and nothing more. Anything the
   // prompt does not allow the model to drop still trips the guard.
+  //
+  // The normalizing has to be aggressive because the model writes typographic
+  // text: a curly apostrophe in "Here's", a non-breaking hyphen in "six-out", or
+  // "ten" for "10" all used to read as lost words even when nothing was lost.
   _contentWords(text) {
     const words = String(text || "")
+      .normalize("NFKC")
+      .replace(/[\u2018\u2019\u02bc]/g, "'")
+      .replace(/[\u2010-\u2015\u2212]/g, "-")
       .toLowerCase()
-      .split(/\s+/)
-      .map((word) => word.replace(/^[^a-z0-9']+|[^a-z0-9']+$/g, ""))
-      .filter((word) => word && !FILLER_WORDS.has(word));
+      // Hyphen and slash split on both sides, so joining or splitting a compound
+      // never registers as a change.
+      .split(/[\s\-\/]+/)
+      .map((word) => word.replace(/^[^a-z0-9']+|[^a-z0-9']+$/g, "").replace(/^'+|'+$/g, ""))
+      .filter((word) => word && !FILLER_WORDS.has(word))
+      .map((word) => NUMBER_WORDS[word] || word);
 
     const withoutStandaloneFillerPhrases = [];
     for (let i = 0; i < words.length; i += 1) {
@@ -256,14 +346,34 @@ class TextProcessingService {
       withoutStandaloneFillerPhrases.push(words[i]);
     }
 
-    const withoutStutters = withoutStandaloneFillerPhrases.filter(
-      (word, index) => word !== withoutStandaloneFillerPhrases[index - 1]
-    );
+    const withoutFalseStarts = this._collapseFalseStarts(withoutStandaloneFillerPhrases);
 
-    if (withoutStutters.length && LEADING_MARKERS.has(withoutStutters[0])) {
-      return withoutStutters.slice(1);
+    if (withoutFalseStarts.length && LEADING_MARKERS.has(withoutFalseStarts[0])) {
+      return withoutFalseStarts.slice(1);
     }
-    return withoutStutters;
+    return withoutFalseStarts;
+  }
+
+  // Dictation restarts in phrases, not single words: "no we can't we can't have",
+  // "I want to I want to make a lineup". Collapsing only adjacent duplicate words
+  // left the second copy of the phrase in the raw side and nowhere in the polish.
+  _collapseFalseStarts(words) {
+    const out = words.slice();
+    for (let size = LONGEST_FALSE_START; size >= 1; size -= 1) {
+      let i = 0;
+      while (i + 2 * size <= out.length) {
+        let repeated = true;
+        for (let k = 0; k < size; k += 1) {
+          if (out[i + k] !== out[i + size + k]) {
+            repeated = false;
+            break;
+          }
+        }
+        if (repeated) out.splice(i + size, size);
+        else i += 1;
+      }
+    }
+    return out;
   }
 }
 

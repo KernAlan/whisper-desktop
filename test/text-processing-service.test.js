@@ -77,6 +77,79 @@ test("polish guard still rejects a dropped mid-sentence 'so'", () => {
   );
 });
 
+test("polish guard ignores typographic apostrophes and hyphens", () => {
+  const text = service();
+  assert.equal(
+    text._keepsContentWords(
+      "here's the six-out rule for the well-known case",
+      "\u201CHere\u2019s the six\u2011out rule for the well\u2010known case."
+    ),
+    true
+  );
+});
+
+test("polish guard treats number words and digits as the same word", () => {
+  const text = service();
+  assert.equal(
+    text._keepsContentWords(
+      "can we do another like 10 of these just various",
+      "Can we do another like ten of these, just various?"
+    ),
+    true
+  );
+});
+
+test("polish guard allows collapsing a repeated phrase false start", () => {
+  const text = service();
+  assert.equal(
+    text._keepsContentWords(
+      "no we can't we can't have sam play all six things",
+      "No, we can't have Sam play all six things."
+    ),
+    true
+  );
+});
+
+test("polish guard allows joining and splitting a compound", () => {
+  const text = service();
+  assert.equal(
+    text._keepsContentWords(
+      "put that line up into some kind of sheet",
+      "Put that lineup into some kind of sheet."
+    ),
+    true
+  );
+  assert.equal(
+    text._keepsContentWords(
+      "put that lineup into some kind of sheet",
+      "Put that line up into some kind of sheet."
+    ),
+    true
+  );
+});
+
+test("polish guard keeps discourse markers the prompt tells the model to keep", () => {
+  const text = service();
+  assert.equal(
+    text._keepsContentWords(
+      "yeah the six outs doesn't make a whole lot of sense to me truthfully honestly",
+      "The six outs doesn't make a whole lot of sense to me."
+    ),
+    false
+  );
+});
+
+test("polish guard gives long dictations a small drop budget and short ones none", () => {
+  const text = service();
+  const long = Array.from({ length: 100 }, (_, i) => `word${i}`).join(" ");
+  const longMinusOne = long.split(" ").filter((_, i) => i !== 50).join(" ");
+  assert.equal(text._keepsContentWords(long, longMinusOne), true);
+  assert.equal(
+    text._keepsContentWords("ship the preview window today", "Ship the window today."),
+    false
+  );
+});
+
 test("polish guard rejects a summarized rewrite", () => {
   const text = service();
   assert.equal(

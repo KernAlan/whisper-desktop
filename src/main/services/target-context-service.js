@@ -1,8 +1,35 @@
 const fs = require("node:fs/promises");
 const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
+const { PowerShellWorker } = require("./powershell-worker");
 
 const execFileAsync = promisify(execFile);
+
+// The same declarations as WINDOWS_NATIVE_TYPE, on one line. PowerShell reads the
+// worker's stdin a statement at a time, so the type has to be a single-quoted
+// one-liner rather than a here-string. C# does not care about the line breaks.
+const WINDOWS_NATIVE_TYPE_INLINE =
+  "using System; using System.Runtime.InteropServices; " +
+  "public static class WhisperDesktopTarget { " +
+  '[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); ' +
+  '[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId); ' +
+  '[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd); ' +
+  '[DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int command); }';
+
+// Compiled once per worker, then every capture and paste is a one-line call.
+// The WScript.Shell COM object is built once here too; creating it per paste cost
+// about 20ms on top of the process spawn.
+const WINDOWS_WORKER_INIT = [
+  "$ErrorActionPreference = 'Stop'",
+  `Add-Type -TypeDefinition '${WINDOWS_NATIVE_TYPE_INLINE}'`,
+  "$WDShell = New-Object -ComObject WScript.Shell",
+  "function Invoke-WDShortcut { param($Target,$ProcId,$Keys,$Id) try { $t = [IntPtr]::new([int64]$Target); if ([WhisperDesktopTarget]::GetForegroundWindow() -ne $t) { [WhisperDesktopTarget]::ShowWindowAsync($t, 9) | Out-Null; if (-not [WhisperDesktopTarget]::SetForegroundWindow($t)) { $WDShell.AppActivate([int]$ProcId) | Out-Null }; Start-Sleep -Milliseconds 60 }; if ([WhisperDesktopTarget]::GetForegroundWindow() -ne $t) { throw 'target-window-not-foreground' }; $WDShell.SendKeys($Keys); Write-Output \"@@WD $Id OK\" } catch { Write-Output \"@@WD $Id ERR $($_.Exception.Message -replace '\s+', ' ')\" } }",
+  "function Invoke-WDCapture { param($Id) try { $w = [WhisperDesktopTarget]::GetForegroundWindow(); if ($w -eq [IntPtr]::Zero) { throw 'no-foreground-window' }; $procId = [uint32]0; [WhisperDesktopTarget]::GetWindowThreadProcessId($w, [ref]$procId) | Out-Null; $p = Get-Process -Id $procId; $json = [pscustomobject]@{ windowId = $w.ToInt64().ToString(); processId = [int]$procId; appName = $p.ProcessName } | ConvertTo-Json -Compress; Write-Output \"@@WD $Id OK $json\" } catch { Write-Output \"@@WD $Id ERR $($_.Exception.Message -replace '\s+', ' ')\" } }",
+].join(String.fromCharCode(10));
+
+// After this many consecutive worker failures the service stops trying and uses
+// the one-shot path, so a broken worker costs one timeout rather than one per paste.
+const MAX_WORKER_FAILURES = 3;
 
 const WINDOWS_NATIVE_TYPE = `
 using System;
@@ -65,11 +92,57 @@ class TargetContextService {
     execFileRunner = execFileAsync,
     readFile = fs.readFile,
     logger,
+    powerShellWorker,
+    useWorker = true,
   } = {}) {
     this.platform = platform;
     this.execFileAsync = execFileRunner;
     this.readFile = readFile;
     this.logger = logger || console;
+    this.workerFailures = 0;
+    this.worker = null;
+    if (platform === "win32" && useWorker) {
+      this.worker = powerShellWorker || new PowerShellWorker({
+        initScript: WINDOWS_WORKER_INIT,
+        logger: this.logger,
+      });
+    }
+  }
+
+  // Called at startup so the Add-Type compile happens while the user is still
+  // getting oriented, not on their first dictation.
+  warmUp() {
+    this.worker?.warmUp?.();
+  }
+
+  dispose() {
+    this.worker?.dispose?.();
+    this.worker = null;
+  }
+
+  // Returns null when the worker is unavailable or has failed too often, which
+  // tells the caller to use the one-shot powershell.exe path instead.
+  async _runOnWorker(command) {
+    if (!this.worker || this.workerFailures >= MAX_WORKER_FAILURES) return null;
+    try {
+      const result = await this.worker.run(command);
+      this.workerFailures = 0;
+      return { ok: true, payload: result };
+    } catch (error) {
+      // A script-level error ("target-window-not-foreground") is a real answer,
+      // not a broken worker, and must not trigger the fallback or the counter.
+      if (error?.message && !/worker|spawn|ENOENT|EPIPE|timed out/i.test(error.message)) {
+        return { ok: false, error };
+      }
+      this.workerFailures += 1;
+      this.logger.warn?.(
+        `[Target] PowerShell worker failed (${this.workerFailures}/${MAX_WORKER_FAILURES}): ${error.message}`
+      );
+      if (this.workerFailures >= MAX_WORKER_FAILURES) {
+        this.logger.warn?.("[Target] Falling back to one-shot powershell.exe for the rest of the session.");
+      }
+      return null;
+    }
   }
 
   async capture() {
@@ -114,6 +187,13 @@ class TargetContextService {
   }
 
   async _captureWindows() {
+    const viaWorker = await this._runOnWorker("Invoke-WDCapture");
+    if (viaWorker) {
+      if (!viaWorker.ok) throw viaWorker.error;
+      const context = sanitizeTargetContext(JSON.parse(viaWorker.payload), this.platform);
+      if (!context?.windowId) throw new Error("No active window was found");
+      return context;
+    }
     const { stdout } = await this.execFileAsync("powershell.exe", [
       "-NoProfile",
       "-NonInteractive",
@@ -166,6 +246,17 @@ class TargetContextService {
     if (!context.windowId) throw new Error("The original target window cannot be restored.");
     const keys = { paste: "^v", copy: "^c", undo: "^z" }[operation];
     if (!keys) throw new Error(`Unsupported target operation: ${operation}`);
+
+    // windowId and processId are digits-only out of sanitizeTargetContext and keys
+    // comes from the fixed map above, so the command line cannot be injected into.
+    const viaWorker = await this._runOnWorker(
+      `Invoke-WDShortcut -Target ${context.windowId} -ProcId ${context.processId || 0} -Keys '${keys}'`
+    );
+    if (viaWorker) {
+      if (!viaWorker.ok) throw viaWorker.error;
+      return;
+    }
+
     const script = `
 Add-Type -TypeDefinition @'
 ${WINDOWS_NATIVE_TYPE}
@@ -237,6 +328,7 @@ end tell`;
 }
 
 module.exports = {
+  WINDOWS_WORKER_INIT,
   MAC_CAPTURE_SCRIPT,
   WINDOWS_CAPTURE_SCRIPT,
   TargetContextService,

@@ -42,6 +42,10 @@ function loadConfig(env = process.env) {
       pasteChunkChars: toInt(env.APP_PASTE_CHUNK_CHARS, 1500),
       pasteChunkDelayMs: toMs(env.APP_PASTE_CHUNK_DELAY_MS, 80),
       wakePhraseEnabled: toBool(env.APP_WAKE_PHRASE_ENABLED, false),
+      // Escape hatch for the persistent PowerShell worker that sends the paste
+      // keystroke. Set APP_POWERSHELL_WORKER=false to go back to spawning a
+      // powershell.exe per paste, which is slower but has no shared state.
+      powerShellWorkerEnabled: toBool(env.APP_POWERSHELL_WORKER, true),
     },
     shortcut: env.APP_HOTKEY || "CommandOrControl+Shift+Space",
     commandShortcut: env.APP_COMMAND_HOTKEY || "CommandOrControl+Shift+E",

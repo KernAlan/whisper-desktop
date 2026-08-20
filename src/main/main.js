@@ -68,7 +68,10 @@ const credentialService = new CredentialService({
   safeStorage,
   logger,
 });
-const targetContextService = new TargetContextService({ logger });
+const targetContextService = new TargetContextService({
+  logger,
+  useWorker: config.app.powerShellWorkerEnabled,
+});
 const wakeModelDir = app.isPackaged
   ? path.join(process.resourcesPath, "wake")
   : path.join(__dirname, "assets", "wake");
@@ -497,6 +500,9 @@ app.on("ready", async () => {
   await transcriptionService.pruneRecovery();
   createAndWireMainWindow();
   consoleService.start();
+  // Compile the native declarations now, so the first paste of the session is as
+  // fast as every later one.
+  targetContextService.warmUp();
   powerMonitor.on("resume", () => {
     setTimeout(() => recoverAfterResume("resume"), 1000);
   });
@@ -507,6 +513,7 @@ app.on("ready", async () => {
 
 app.on("will-quit", () => {
   globalShortcut.unregisterAll();
+  targetContextService.dispose();
 });
 
 app.on("window-all-closed", () => {

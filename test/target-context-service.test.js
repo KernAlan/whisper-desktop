@@ -32,6 +32,7 @@ test("sanitizeTargetContext keeps only safe target metadata", () => {
 test("Windows capture returns an opaque target without a window title", async () => {
   const service = new TargetContextService({
     platform: "win32",
+    useWorker: false,
     logger: { warn() {} },
     execFileRunner: async () => ({
       stdout: JSON.stringify({ windowId: "4321", processId: 77, appName: "Code" }),
@@ -51,6 +52,7 @@ test("Windows paste restores the captured numeric target before sending keys", a
   const calls = [];
   const service = new TargetContextService({
     platform: "win32",
+    useWorker: false,
     logger: { warn() {} },
     execFileRunner: async (file, args) => calls.push({ file, args }),
   });
@@ -103,4 +105,90 @@ test("Linux paste activates the captured window before inserting", async () => {
     file: "xdotool",
     args: ["windowactivate", "--sync", "101", "key", "--clearmodifiers", "ctrl+v"],
   }]);
+});
+
+test("Windows capture and paste go through the persistent worker when it is healthy", async () => {
+  const commands = [];
+  const worker = {
+    warmUp() {},
+    dispose() {},
+    async run(command) {
+      commands.push(command);
+      return command.startsWith("Invoke-WDCapture")
+        ? JSON.stringify({ windowId: "4321", processId: 77, appName: "Code" })
+        : "";
+    },
+  };
+  const service = new TargetContextService({
+    platform: "win32",
+    logger: { warn() {} },
+    powerShellWorker: worker,
+    execFileRunner: async () => {
+      throw new Error("the one-shot path must not run while the worker is healthy");
+    },
+  });
+
+  const context = await service.capture();
+  assert.equal(context.available, true);
+  assert.equal(context.windowId, "4321");
+  assert.equal(context.appName, "Code");
+
+  await service.sendPaste(context);
+  assert.equal(commands.length, 2);
+  assert.equal(commands[0], "Invoke-WDCapture");
+  assert.match(commands[1], /^Invoke-WDShortcut -Target 4321 -ProcId 77 -Keys '\^v'$/);
+});
+
+test("a script-level worker error is reported and does not trigger the fallback", async () => {
+  let oneShotRuns = 0;
+  const service = new TargetContextService({
+    platform: "win32",
+    logger: { warn() {} },
+    powerShellWorker: {
+      warmUp() {},
+      dispose() {},
+      async run() {
+        throw new Error("target-window-not-foreground");
+      },
+    },
+    execFileRunner: async () => {
+      oneShotRuns += 1;
+    },
+  });
+
+  await assert.rejects(
+    service.sendPaste({ available: true, platform: "win32", windowId: "4321", processId: "77" }),
+    /target-window-not-foreground/
+  );
+  assert.equal(oneShotRuns, 0);
+  assert.equal(service.workerFailures, 0);
+});
+
+test("a broken worker falls back to one-shot powershell and then stops retrying", async () => {
+  const oneShotCalls = [];
+  let workerRuns = 0;
+  const service = new TargetContextService({
+    platform: "win32",
+    logger: { warn() {} },
+    powerShellWorker: {
+      warmUp() {},
+      dispose() {},
+      async run() {
+        workerRuns += 1;
+        throw new Error("PowerShell worker exited with code 1");
+      },
+    },
+    execFileRunner: async (file, args) => {
+      oneShotCalls.push({ file, args });
+    },
+  });
+
+  const target = { available: true, platform: "win32", windowId: "4321", processId: "77" };
+  for (let i = 0; i < 5; i += 1) {
+    await service.sendPaste(target);
+  }
+
+  assert.equal(oneShotCalls.length, 5, "every paste still succeeds through the one-shot path");
+  assert.equal(workerRuns, 3, "the worker is abandoned after MAX_WORKER_FAILURES");
+  assert.match(oneShotCalls[0].args.at(-1), /SendKeys\('\^v'\)/);
 });

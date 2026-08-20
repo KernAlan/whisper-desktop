@@ -405,3 +405,54 @@ test("RecorderController rotates a quiet long recording and assembles stable che
     globalThis.MediaRecorder = previousMediaRecorder;
   }
 });
+
+test("RecorderController hands focus back while the polish request is still in flight", async () => {
+  const { RecorderController } = await import("../src/renderer/core/recorder-controller.js");
+  const order = [];
+  let hiddenBeforePolishResolved = false;
+
+  const controller = new RecorderController(createControllerDeps({
+    focusRestoreDelayMs: 5,
+    hideWindow: async () => {
+      order.push("hide");
+    },
+    polishDictation: async ({ transcript }) => {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      hiddenBeforePolishResolved = order.includes("hide");
+      order.push("polish");
+      return `${transcript}.`;
+    },
+    simulateTyping: async () => {
+      order.push("paste");
+      return { ok: true };
+    },
+  }));
+
+  const result = await controller._processTranscriptForPaste("hello world");
+
+  // The hide must land during the polish call, not after it. Running it
+  // afterwards put the full focus handoff on every dictation's critical path.
+  assert.equal(hiddenBeforePolishResolved, true);
+  assert.deepEqual(order, ["hide", "polish", "paste"]);
+  assert.equal(result.outputText, "hello world.");
+});
+
+test("RecorderController still hands focus back when no polish runs", async () => {
+  const { RecorderController } = await import("../src/renderer/core/recorder-controller.js");
+  const order = [];
+  const controller = new RecorderController(createControllerDeps({
+    focusRestoreDelayMs: 5,
+    hideWindow: async () => {
+      order.push("hide");
+    },
+    simulateTyping: async () => {
+      order.push("paste");
+      return { ok: true };
+    },
+  }));
+  controller.setDictationMode("fast");
+
+  await controller._processTranscriptForPaste("hello world");
+
+  assert.deepEqual(order, ["hide", "paste"]);
+});

@@ -275,6 +275,20 @@ export class RecorderController {
     return true;
   }
 
+  // Waits for the captured target window, hides the overlay, and gives the OS a
+  // moment to move focus back. Safe to start before the text to paste is known,
+  // and safe to await more than once: the promise is created by the caller.
+  async _handOffFocusToTarget() {
+    await this._waitForTargetContext();
+    if (!this.hideWindow) return;
+    try {
+      await this.hideWindow();
+      await new Promise((resolve) => setTimeout(resolve, this.focusRestoreDelayMs));
+    } catch (_error) {
+      // Ignore hide/focus handoff failures and still attempt paste.
+    }
+  }
+
   _waitForTargetContext(timeoutMs = TARGET_CONTEXT_WAIT_MS) {
     if (!this.targetContextPending) return Promise.resolve(this.targetContext);
 
@@ -1188,6 +1202,8 @@ export class RecorderController {
     const isCancelled = () => typeof shouldCancel === "function" && shouldCancel();
     let polishMs = 0;
     let textToPaste = transcript;
+    // Set when the focus handoff is started early, alongside a network call.
+    let handoff = null;
     const cancelledResult = () => ({
       outputText: textToPaste || "",
       polishMs,
@@ -1245,6 +1261,11 @@ export class RecorderController {
       });
     } else if (this.dictationMode === "polished" && this.polishDictation) {
       this.updateStatus("Polishing...", "blue");
+      // Hand focus back to the target app while the polish request is in flight.
+      // Neither the window hide nor the focus-restore wait needs the polished
+      // text, and running them afterwards added their full cost to every
+      // dictation. Started here, they finish free inside the network call.
+      handoff = this._handOffFocusToTarget();
       try {
         const polishStartedAt = Date.now();
         const polishedText = await this.polishDictation({ transcript });
@@ -1272,16 +1293,7 @@ export class RecorderController {
 
     if (isCancelled()) return cancelledResult();
     this.lastOutputText = textToPaste;
-    await this._waitForTargetContext();
-    if (isCancelled()) return cancelledResult();
-    if (this.hideWindow) {
-      try {
-        await this.hideWindow();
-        await new Promise((resolve) => setTimeout(resolve, this.focusRestoreDelayMs));
-      } catch (_error) {
-        // Ignore hide/focus handoff failures and still attempt paste.
-      }
-    }
+    await (handoff || this._handOffFocusToTarget());
     if (isCancelled()) return cancelledResult();
     const pasteResult = await this.simulateTyping(textToPaste, {
       targetContext: this.targetContext,

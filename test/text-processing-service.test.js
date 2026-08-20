@@ -150,6 +150,26 @@ test("polish guard gives long dictations a small drop budget and short ones none
   );
 });
 
+test("polish strips line breaks the speaker did not dictate", () => {
+  const text = service();
+  assert.equal(
+    text._matchLineBreaks(
+      "it's a big problem you have a long break between catching and then pitching",
+      "It's a big problem.\n\nYou have a long break between catching and then pitching."
+    ),
+    "It's a big problem. You have a long break between catching and then pitching."
+  );
+});
+
+test("polish keeps line breaks that were already in the transcript", () => {
+  const text = service();
+  const raw = "the pitchers are\ngrant and levi";
+  assert.equal(
+    text._matchLineBreaks(raw, "The pitchers are:\nGrant and Levi."),
+    "The pitchers are:\nGrant and Levi."
+  );
+});
+
 test("polish guard rejects a summarized rewrite", () => {
   const text = service();
   assert.equal(

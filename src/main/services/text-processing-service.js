@@ -35,7 +35,8 @@ const LONGEST_FALSE_START = 4;
 // and pasted the raw transcript instead: 19 of 32 dictations on 2026-08-20.
 const POLISH_RULES = [
   "You punctuate dictated speech. You do not edit it.",
-  "Copy every word through in the same order. Add punctuation, capitalization, paragraph breaks, and list formatting. Fix spelling.",
+  "Copy every word through in the same order. Add punctuation and capitalization. Fix spelling.",
+  "Return the result as a single paragraph on one line. Never add a line break or a blank line: the text is pasted into whatever field the user is typing in, where a newline can send the message. Only keep line breaks if the user dictated an explicit list.",
   "Delete only: 'um', 'uh', 'er', 'ah', 'hmm', and an immediately repeated word or false start.",
   "Keep every other word, including 'right', 'yeah', 'so', 'well', 'like', 'you know', 'I mean', 'maybe', 'sort of', 'actually', 'honestly', 'and so on'.",
   "Never reword, condense, merge, split, reorder, or drop a clause. Never swap a word for a synonym. Never add anything.",
@@ -196,7 +197,18 @@ class TextProcessingService {
       `Dictation polishing timed out after ${this.timeoutMs}ms`
     );
 
-    return response?.choices?.[0]?.message?.content?.trim() || rawText;
+    const polished = response?.choices?.[0]?.message?.content?.trim();
+    if (!polished) return rawText;
+    return this._matchLineBreaks(rawText, polished);
+  }
+
+  // The prompt forbids line breaks, but the paste is destructive if the model
+  // ignores it: in most chat fields a newline sends the message mid-sentence.
+  // Measured before this rule, 8 of 20 dictations came back with one. If the
+  // speaker's own transcript had no line break, neither may the polish.
+  _matchLineBreaks(rawText, polishedText) {
+    if (/[\n\r]/.test(rawText)) return polishedText;
+    return polishedText.replace(/\s*[\n\r]+\s*/g, " ").trim();
   }
 
   _judgePolish(rawText, polishedText) {

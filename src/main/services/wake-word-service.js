@@ -1,5 +1,6 @@
 const fs = require("fs");
 const path = require("path");
+const { readTokenSet, toKeywordTokens } = require("./wake-keywords");
 
 const SAMPLE_RATE = 16000;
 const DEFAULT_KEYWORD = "Hey Whisper";
@@ -9,6 +10,10 @@ const CLOSE_MODE = "close";
 const KEYWORD_FILE_BY_MODE = {
   [WAKE_MODE]: "keywords.txt",
   [CLOSE_MODE]: "close-keywords.txt",
+};
+const KEYWORD_PHRASE_BY_MODE = {
+  [WAKE_MODE]: DEFAULT_KEYWORD,
+  [CLOSE_MODE]: CLOSE_KEYWORD,
 };
 
 class WakeWordService {
@@ -125,6 +130,7 @@ class WakeWordService {
     if (!fs.existsSync(keywordFile)) {
       throw new Error(`Wake model asset is missing: ${KEYWORD_FILE_BY_MODE[mode]}`);
     }
+    this._assertKeywordTokens(mode, keywordFile);
 
     const keywordSpotter = new sherpa.KeywordSpotter({
       featConfig: {
@@ -150,6 +156,20 @@ class WakeWordService {
     });
     this.keywordSpotters.set(mode, keywordSpotter);
     return keywordSpotter;
+  }
+
+  // A keyword file can be made of valid tokens and still never fire if the
+  // phrase is split the wrong way, so compare it against the greedy
+  // segmentation the transducer actually emits.
+  _assertKeywordTokens(mode, keywordFile) {
+    const phrase = KEYWORD_PHRASE_BY_MODE[mode];
+    const expected = toKeywordTokens(phrase, readTokenSet(path.join(this.modelDir, "tokens.txt")));
+    const actual = fs.readFileSync(keywordFile, "utf8").trim();
+    if (actual !== expected) {
+      throw new Error(
+        `Wake keyword asset ${KEYWORD_FILE_BY_MODE[mode]} does not match "${phrase}": expected "${expected}", found "${actual}"`
+      );
+    }
   }
 }
 

@@ -185,13 +185,16 @@ export class WakeController {
     }
   }
 
+  // The close phrase listens for any active dictation, not only dictation the
+  // wake phrase started, so the hotkey and the voice command stay interchangeable.
   async handleRecorderState(state, states) {
     if (!this.enabled) return;
-    if (state === states.RECORDING && this.closePhraseActive) {
+    if (state === states.RECORDING) {
+      this.closePhraseActive = true;
       await this.arm("close");
       return;
     }
-    if ([states.ARMING, states.RECORDING, states.TRANSCRIBING, states.PASTING].includes(state)) {
+    if ([states.ARMING, states.TRANSCRIBING, states.PASTING].includes(state)) {
       await this.disarm();
       return;
     }

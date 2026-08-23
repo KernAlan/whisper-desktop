@@ -139,3 +139,79 @@ test("RecorderController endpoints a wake activation locally", async () => {
   assert.equal(stopCalls, 1);
   assert.equal(controller.wakeDiscardRequested, true);
 });
+
+test("WakeController arms the close phrase for hotkey-started dictation too", async () => {
+  const { WakeController } = await import("../src/renderer/core/wake-controller.js");
+  const modes = [];
+  let stopped = 0;
+  const controller = new WakeController({
+    audioEngine: {
+      audioContext: { sampleRate: 16000 },
+      async ensureStream() {},
+      startPcmTap() {},
+      stopPcmTap() {},
+    },
+    requestMicrophoneAccess: async () => {},
+    startWakeWord: async ({ mode }) => {
+      modes.push(mode);
+      return { enabled: true, keyword: mode === "close" ? "Stop Whisper" : "Hey Whisper" };
+    },
+    stopWakeWord: async () => ({ enabled: false }),
+    sendWakeWordFrame: () => {},
+    onWakeWord: async () => {},
+    onClosePhrase: async () => {
+      stopped += 1;
+    },
+    isRecorderBusy: () => true,
+  });
+
+  await controller.setEnabled(true);
+  // No wake phrase ran, so closePhraseActive is still false: this is the hotkey path.
+  assert.equal(controller.closePhraseActive, false);
+  await controller.handleRecorderState("recording", { RECORDING: "recording" });
+
+  assert.deepEqual(modes, ["close"]);
+  assert.equal(controller.armedMode, "close");
+
+  await controller.handleWakeWord({ mode: "close", keyword: "Stop Whisper" });
+  assert.equal(stopped, 1);
+});
+
+test("WakeController re-arms the wake phrase once dictation ends", async () => {
+  const { WakeController } = await import("../src/renderer/core/wake-controller.js");
+  const modes = [];
+  let busy = true;
+  const controller = new WakeController({
+    audioEngine: {
+      audioContext: { sampleRate: 16000 },
+      async ensureStream() {},
+      startPcmTap() {},
+      stopPcmTap() {},
+      async releaseStream() {},
+    },
+    requestMicrophoneAccess: async () => {},
+    startWakeWord: async ({ mode }) => {
+      modes.push(mode);
+      return { enabled: true };
+    },
+    stopWakeWord: async () => ({ enabled: false }),
+    sendWakeWordFrame: () => {},
+    onWakeWord: async () => {},
+    onClosePhrase: async () => {},
+    isRecorderBusy: () => busy,
+  });
+
+  await controller.setEnabled(true);
+  const states = { IDLE: "idle", ARMING: "arming", RECORDING: "recording", TRANSCRIBING: "transcribing", PASTING: "pasting", ERROR: "error" };
+  await controller.handleRecorderState(states.RECORDING, states);
+  assert.equal(controller.armedMode, "close");
+
+  await controller.handleRecorderState(states.TRANSCRIBING, states);
+  assert.equal(controller.armed, false);
+
+  busy = false;
+  await controller.handleRecorderState(states.IDLE, states);
+  assert.equal(controller.closePhraseActive, false);
+  assert.equal(controller.armedMode, "wake");
+  assert.deepEqual(modes, ["close", "wake"]);
+});

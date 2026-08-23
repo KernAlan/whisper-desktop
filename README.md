@@ -75,7 +75,7 @@ Put your cursor in any text field, press `Ctrl+Shift+Space` (`Cmd+Shift+Space` o
 
 By default the transcript is lightly polished before pasting: content words are preserved, obvious filler and speech artifacts are dropped. If you want raw Whisper output with less latency, set `APP_DICTATION_MODE=fast` or run `set dictation fast` in the CLI.
 
-**Wake phrase.** Enable it in Settings or with `node cli.js set wake on`, then say "Hey Whisper" to start dictating and "Stop Whisper" to finish. Detection runs locally. Ambient audio stays in memory on your machine, and nothing is sent to Groq until you've actually started dictating. A short pre-speech timeout cancels accidental activations, and the hotkey still works as the manual fallback.
+**Wake phrase.** Enable it in Settings or with `node cli.js set wake on`, then say "Hey Whisper" to start dictating and "Stop Whisper" to finish. Detection runs locally. Ambient audio stays in memory on your machine, and nothing is sent to Groq until you've actually started dictating. A short pre-speech timeout cancels accidental activations, and the hotkey still works as the manual fallback. The two are interchangeable: with the wake phrase on, "Stop Whisper" also ends dictation you started with the hotkey.
 
 **Long recordings.** Short dictations go up as one transcription request. Longer ones are persisted and transcribed as silence-aware checkpoints, then assembled before polishing. Recordings over 20MB are split to stay under the API size limit; recordings over `GROQ_POLISH_MAX_WORDS` skip the polish pass and paste raw. Long inserts are pasted in chunks, and your clipboard is saved once and restored at the end (set `APP_CLIPBOARD_RESTORE_MODE=off` if you'd rather keep the inserted text on the clipboard).
 

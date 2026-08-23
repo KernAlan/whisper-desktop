@@ -1,0 +1,4 @@
+# The local wake model is read by a native library that does not tolerate a
+# stray CR. core.autocrlf is on for most Windows clones, so pin these.
+src/main/assets/wake/*.txt text eol=lf
+src/main/assets/wake/*.onnx binary

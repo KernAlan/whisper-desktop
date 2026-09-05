@@ -179,3 +179,26 @@ test("RuntimeSettingsService reset removes saved settings", () => {
 
   fs.removeSync(dir);
 });
+
+// The settings window autosaves its discrete controls by sending just the key
+// that changed, so a patch must leave every other setting exactly as it was --
+// including any half-typed hotkey sitting in the window at the time.
+test("applyRuntimeSettings leaves untouched keys alone when given a patch", () => {
+  const before = defaults();
+  const after = applyRuntimeSettings(before, { wakePhraseEnabled: true });
+
+  assert.equal(after.wakePhraseEnabled, true);
+  for (const key of Object.keys(before)) {
+    if (key === "wakePhraseEnabled") continue;
+    assert.deepEqual(after[key], before[key], `patch changed ${key}`);
+  }
+});
+
+test("a dictation mode patch does not disturb the hotkeys", () => {
+  const before = { ...defaults(), shortcut: "CommandOrControl+Shift+Space" };
+  const after = applyRuntimeSettings(before, { dictationMode: "fast" });
+
+  assert.equal(after.dictationMode, "fast");
+  assert.equal(after.shortcut, "CommandOrControl+Shift+Space");
+  assert.equal(after.commandShortcut, before.commandShortcut);
+});

@@ -79,8 +79,7 @@ function isDirty() {
     const saved = config[field] === undefined || config[field] === null ? "" : String(config[field]);
     if (element.value.trim() !== saved.trim()) return true;
   }
-  if (dictationMode !== (config.dictationMode === "fast" ? "fast" : "polished")) return true;
-  if (byId("wakePhraseEnabled").checked !== Boolean(config.wakePhraseEnabled)) return true;
+  // dictationMode and wakePhraseEnabled autosave, so they are never pending.
   return false;
 }
 
@@ -242,13 +241,27 @@ async function toggleOpenAtLogin(event) {
   }
 }
 
+// Discrete controls have no half-typed intermediate state, so they commit on the
+// spot. The typed fields keep the Save button: saving re-registers the global
+// hotkeys, and doing that per keystroke would thrash the registration on the way
+// to "CommandOrControl+Shift+Space". applyRuntimeSettings merges per key, so a
+// patch touches nothing else.
+async function autosave(patch, message) {
+  try {
+    renderConfig(await window.electronAPI.updateRuntimeSettings(patch));
+    if (message) showToast(message);
+  } catch (error) {
+    showToast(error.message || "Could not save", "error");
+    await load();
+  }
+}
+
 async function save() {
   const payload = {
     shortcut: byId("shortcut").value.trim(),
     commandShortcut: byId("commandShortcut").value.trim(),
     model: byId("model").value.trim(),
     textModel: byId("textModel").value.trim(),
-    dictationMode,
     timeoutMs: numberValue("timeoutMs"),
     previewIntervalMs: numberValue("previewIntervalMs"),
     doneHideWindowMs: numberValue("doneHideWindowMs"),
@@ -256,7 +269,6 @@ async function save() {
     polishMaxWords: numberValue("polishMaxWords"),
     pasteChunkChars: numberValue("pasteChunkChars"),
     pasteChunkDelayMs: numberValue("pasteChunkDelayMs"),
-    wakePhraseEnabled: byId("wakePhraseEnabled")?.checked === true,
   };
 
   try {
@@ -453,13 +465,20 @@ async function testMic() {
 }
 
 document.querySelectorAll("#dictationMode button").forEach((button) => {
-  button.addEventListener("click", () => setDictationMode(button.dataset.mode));
+  button.addEventListener("click", () => {
+    if (button.dataset.mode === dictationMode) return;
+    setDictationMode(button.dataset.mode);
+    autosave({ dictationMode }, `Dictation set to ${dictationMode}`);
+  });
 });
 
 fields.forEach((field) => {
   byId(field)?.addEventListener("input", updateDirtyState);
 });
-byId("wakePhraseEnabled").addEventListener("change", updateDirtyState);
+byId("wakePhraseEnabled").addEventListener("change", (event) => {
+  const enabled = event.target.checked === true;
+  autosave({ wakePhraseEnabled: enabled }, enabled ? "Wake phrase on" : "Wake phrase off");
+});
 
 byId("openAtLogin").addEventListener("change", toggleOpenAtLogin);
 // The same setting is in the tray menu, so re-read it whenever this window

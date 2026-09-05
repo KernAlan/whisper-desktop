@@ -2,6 +2,14 @@ const fs = require("node:fs/promises");
 const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
 const { PowerShellWorker } = require("./powershell-worker");
+const {
+  toSendKeys,
+  toAppleScript,
+  toXdotool,
+  escapeSendKeysText,
+  escapeAppleScriptText,
+  escapePowerShellSingleQuoted,
+} = require("./keystroke-format");
 
 const execFileAsync = promisify(execFile);
 
@@ -186,6 +194,38 @@ class TargetContextService {
     return this._sendShortcut(targetContext, "undo");
   }
 
+  /** Sends an arbitrary accelerator, e.g. a configured paste or submit key. */
+  async sendKeystroke(targetContext, accelerator) {
+    const context = sanitizeTargetContext(targetContext, this.platform);
+    if (!context?.available) {
+      throw new Error("The original target application is unavailable. Text was kept on the clipboard.");
+    }
+    if (this.platform === "win32") {
+      return this._sendWindowsKeys(context, toSendKeys(accelerator, this.platform));
+    }
+    if (this.platform === "darwin") {
+      return this._sendMacClause(context, toAppleScript(accelerator, this.platform));
+    }
+    return this._sendLinuxKey(context, toXdotool(accelerator, this.platform));
+  }
+
+  /** Types literal text as keystrokes, leaving the clipboard untouched. */
+  async sendText(targetContext, text) {
+    const value = String(text ?? "");
+    if (!value) return;
+    const context = sanitizeTargetContext(targetContext, this.platform);
+    if (!context?.available) {
+      throw new Error("The original target application is unavailable. Text was kept on the clipboard.");
+    }
+    if (this.platform === "win32") {
+      return this._sendWindowsKeys(context, escapeSendKeysText(value));
+    }
+    if (this.platform === "darwin") {
+      return this._sendMacClause(context, `keystroke "${escapeAppleScriptText(value)}"`);
+    }
+    return this._sendLinuxText(context, value);
+  }
+
   async _captureWindows() {
     const viaWorker = await this._runOnWorker("Invoke-WDCapture");
     if (viaWorker) {
@@ -246,11 +286,18 @@ class TargetContextService {
     if (!context.windowId) throw new Error("The original target window cannot be restored.");
     const keys = { paste: "^v", copy: "^c", undo: "^z" }[operation];
     if (!keys) throw new Error(`Unsupported target operation: ${operation}`);
+    return this._sendWindowsKeys(context, keys);
+  }
 
-    // windowId and processId are digits-only out of sanitizeTargetContext and keys
-    // comes from the fixed map above, so the command line cannot be injected into.
+  async _sendWindowsKeys(context, keys) {
+    if (!context.windowId) throw new Error("The original target window cannot be restored.");
+    // windowId and processId are digits-only out of sanitizeTargetContext. `keys`
+    // can be dictated text, so it is escaped for the single-quoted PowerShell
+    // literal it lands in -- and escapeSendKeysText has already turned any
+    // newline into {ENTER}, which the worker's line-based protocol depends on.
+    const safeKeys = escapePowerShellSingleQuoted(keys);
     const viaWorker = await this._runOnWorker(
-      `Invoke-WDShortcut -Target ${context.windowId} -ProcId ${context.processId || 0} -Keys '${keys}'`
+      `Invoke-WDShortcut -Target ${context.windowId} -ProcId ${context.processId || 0} -Keys '${safeKeys}'`
     );
     if (viaWorker) {
       if (!viaWorker.ok) throw viaWorker.error;
@@ -274,7 +321,7 @@ if ($current -ne $target) {
 }
 if ([WhisperDesktopTarget]::GetForegroundWindow() -ne $target) { exit 3 }
 $shell = New-Object -ComObject WScript.Shell
-$shell.SendKeys('${keys}')
+$shell.SendKeys('${safeKeys}')
 `;
     await this.execFileAsync("powershell.exe", [
       "-NoProfile",
@@ -305,6 +352,43 @@ delay 0.06
 keystroke "${operation === "copy" ? "c" : "z"}" using command down
 end tell`;
     await this.execFileAsync("osascript", ["-e", script]);
+  }
+
+  async _sendMacClause(context, clause) {
+    if (!context.processId) throw new Error("The original target application cannot be restored.");
+    const script = `tell application "System Events" to tell first application process whose unix id is ${context.processId}
+set frontmost to true
+delay 0.06
+${clause}
+end tell`;
+    await this.execFileAsync("osascript", ["-e", script]);
+  }
+
+  async _sendLinuxKey(context, key) {
+    if (!context.windowId) throw new Error("The original target window cannot be restored.");
+    try {
+      await this.execFileAsync("xdotool", [
+        "windowactivate", "--sync", context.windowId, "key", "--clearmodifiers", key,
+      ]);
+    } catch (error) {
+      const wrapped = new Error("The original Linux target could not be restored. Ensure xdotool is installed.");
+      wrapped.cause = error;
+      throw wrapped;
+    }
+  }
+
+  async _sendLinuxText(context, text) {
+    if (!context.windowId) throw new Error("The original target window cannot be restored.");
+    try {
+      // `--` stops xdotool reading dictated text that starts with a dash as flags.
+      await this.execFileAsync("xdotool", [
+        "windowactivate", "--sync", context.windowId, "type", "--clearmodifiers", "--", text,
+      ]);
+    } catch (error) {
+      const wrapped = new Error("The original Linux target could not be restored. Ensure xdotool is installed.");
+      wrapped.cause = error;
+      throw wrapped;
+    }
   }
 
   async _sendLinuxShortcut(context, operation) {

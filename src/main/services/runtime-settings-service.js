@@ -1,4 +1,5 @@
 const fs = require("fs-extra");
+const { isSupportedAccelerator } = require("./keystroke-format");
 
 const MUTABLE_KEYS = [
   "shortcut",
@@ -14,6 +15,8 @@ const MUTABLE_KEYS = [
   "dictationMode",
   "doneHideWindowMs",
   "clipboardRestoreMode",
+  "outputMode",
+  "pasteShortcut",
   "clipboardRestoreDelayMs",
   "pasteChunkChars",
   "pasteChunkDelayMs",
@@ -48,6 +51,8 @@ function createRuntimeDefaults(config) {
     dictationMode: config.app.dictationMode,
     doneHideWindowMs: config.app.doneHideWindowMs,
     clipboardRestoreMode: config.app.clipboardRestoreMode,
+    outputMode: config.app.outputMode,
+    pasteShortcut: config.app.pasteShortcut,
     clipboardRestoreDelayMs: config.app.clipboardRestoreDelayMs,
     pasteChunkChars: config.app.pasteChunkChars,
     pasteChunkDelayMs: config.app.pasteChunkDelayMs,
@@ -137,6 +142,17 @@ function applyRuntimeSettings(current, payload = {}) {
 
   if (typeof payload.wakePhraseEnabled === "boolean") {
     next.wakePhraseEnabled = payload.wakePhraseEnabled;
+  }
+
+  if (["paste", "type", "clipboard"].includes(payload.outputMode)) {
+    next.outputMode = payload.outputMode;
+  }
+
+  // A keystroke that cannot be encoded would be sent into whatever the user is
+  // typing in, so an unusable one is dropped and the old setting stands.
+  if (typeof payload.pasteShortcut === "string" && payload.pasteShortcut.trim()) {
+    const shortcut = payload.pasteShortcut.trim();
+    if (isSupportedAccelerator(shortcut)) next.pasteShortcut = shortcut;
   }
 
   return next;

@@ -512,6 +512,33 @@
       </section>
 
       <section>
+        <h2>Output</h2>
+        <div class="segmented" id="outputMode">
+          <button type="button" data-output="paste">Paste<small>Copies the text and sends the paste key</small></button>
+          <button type="button" data-output="type">Type<small>Simulates keystrokes and never touches the clipboard</small></button>
+          <button type="button" data-output="clipboard">Clipboard only<small>Puts the text on the clipboard and stops there</small></button>
+        </div>
+        <p class="hint">Takes effect as soon as you pick it. Use Type for apps that refuse a pasted insert; it is slower and can mangle unusual characters.</p>
+        <div class="row" id="pasteShortcutRow">
+          <div>
+            <label for="pasteShortcut">Paste keystroke</label>
+            <input id="pasteShortcut" spellcheck="false" placeholder="CommandOrControl+V">
+          </div>
+        </div>
+        <p class="hint">Only used by Paste. Set it to CommandOrControl+Shift+V for apps where that means paste without formatting.</p>
+      </section>
+
+      <section>
+        <h2>Clipboard</h2>
+        <div class="segmented" id="clipboardRestoreMode">
+          <button type="button" data-clipboard="deferred">Restore<small>Puts your previous clipboard back afterwards</small></button>
+          <button type="button" data-clipboard="blocking">Restore, wait<small>Same, but finishes before handing back control</small></button>
+          <button type="button" data-clipboard="off">Keep the text<small>Leaves the dictated text on the clipboard</small></button>
+        </div>
+        <p class="hint">Takes effect as soon as you pick it. Paste has to use the clipboard to work; pick Type above if you want it left untouched entirely.</p>
+      </section>
+
+      <section>
         <h2>Hotkeys</h2>
         <div class="row">
           <div>

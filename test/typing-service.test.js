@@ -145,3 +145,110 @@ test("paste failure also restores the previous clipboard", async () => {
   assert.equal(result.ok, false);
   assert.equal(clipboardApi.getText(), "original clipboard");
 });
+
+// --- Output modes -----------------------------------------------------------
+
+test("clipboard mode writes the text and sends no keystrokes", async () => {
+  const calls = [];
+  const clip = fakeClipboard();
+  const typing = new TypingService({
+    logger: { warn() {}, error() {} },
+    outputMode: "clipboard",
+    clipboardApi: clip,
+    execFileRunner: async (...args) => {
+      calls.push(args);
+      return { stdout: "" };
+    },
+  });
+
+  const result = await typing.pasteText("hello there");
+
+  assert.equal(result.ok, true);
+  assert.equal(result.outputMode, "clipboard");
+  assert.equal(clip.readText(), "hello there");
+  assert.deepEqual(calls, [], "clipboard mode must not send keystrokes");
+});
+
+// The whole point of typing mode is that it is the one path that leaves the
+// clipboard alone, so an app that refuses a paste can still be dictated into.
+test("typing mode never touches the clipboard", async () => {
+  const sent = [];
+  const clip = fakeClipboard("do not disturb");
+  const typing = new TypingService({
+    logger: { warn() {}, error() {} },
+    outputMode: "type",
+    clipboardApi: clip,
+    targetContextService: {
+      sendText: async (_ctx, text) => sent.push(text),
+    },
+  });
+
+  const result = await typing.pasteText("typed output", { targetContext: { available: true } });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.outputMode, "type");
+  assert.deepEqual(sent, ["typed output"]);
+  assert.equal(clip.readText(), "do not disturb");
+});
+
+test("typing mode falls back to the clipboard when it fails", async () => {
+  const clip = fakeClipboard("original");
+  const typing = new TypingService({
+    logger: { warn() {}, error() {} },
+    outputMode: "type",
+    clipboardApi: clip,
+    targetContextService: {
+      sendText: async () => {
+        throw new Error("target gone");
+      },
+    },
+  });
+
+  const result = await typing.pasteText("would be lost", { targetContext: { available: true } });
+
+  assert.equal(result.ok, false);
+  // Typing leaves nothing anywhere, so the text has to survive somewhere.
+  assert.equal(clip.readText(), "would be lost");
+});
+
+test("the default paste shortcut keeps the existing paste path", async () => {
+  const calls = [];
+  const typing = new TypingService({
+    logger: { warn() {}, error() {} },
+    clipboardApi: fakeClipboard(),
+    targetContextService: {
+      sendPaste: async () => calls.push("sendPaste"),
+      sendKeystroke: async (_ctx, accel) => calls.push(`sendKeystroke:${accel}`),
+    },
+  });
+
+  await typing.pasteText("text", { targetContext: { available: true } });
+  assert.deepEqual(calls, ["sendPaste"]);
+});
+
+test("a custom paste shortcut is sent as a keystroke instead", async () => {
+  const calls = [];
+  const typing = new TypingService({
+    logger: { warn() {}, error() {} },
+    clipboardApi: fakeClipboard(),
+    pasteShortcut: "CommandOrControl+Shift+V",
+    targetContextService: {
+      sendPaste: async () => calls.push("sendPaste"),
+      sendKeystroke: async (_ctx, accel) => calls.push(`sendKeystroke:${accel}`),
+    },
+  });
+
+  await typing.pasteText("text", { targetContext: { available: true } });
+  assert.deepEqual(calls, ["sendKeystroke:CommandOrControl+Shift+V"]);
+});
+
+test("setOutputConfig rejects values it does not understand", () => {
+  const typing = service();
+  typing.setOutputConfig({ outputMode: "telepathy", pasteShortcut: "   " });
+  assert.equal(typing.outputMode, "paste");
+  assert.equal(typing.pasteShortcut, "CommandOrControl+V");
+
+  typing.setOutputConfig({ outputMode: "type", pasteShortcut: "Ctrl+Shift+V" });
+  assert.equal(typing.outputMode, "type");
+  assert.equal(typing.pasteShortcut, "Ctrl+Shift+V");
+});

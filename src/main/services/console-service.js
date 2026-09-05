@@ -167,6 +167,8 @@ class ConsoleService {
       kv("set preview <ms>", "Initial preview delay (min 1000)"),
       kv("set timeout <ms>", "Transcription timeout (min 3000)"),
       kv("set restore-delay <ms>", "Clipboard restore delay"),
+      kv("set output <mode>", "How text is inserted: paste | type | clipboard"),
+      kv("set paste-key <keys>", "Keystroke used by paste mode"),
       kv("refresh mic", "Refresh microphone"),
       kv("test mic", "Test microphone levels"),
       kv("devices", "List audio inputs"),
@@ -203,6 +205,7 @@ class ConsoleService {
       kv("Polish Max", `${s.polishMaxWords} words`),
       kv("Hotkey", s.shortcut),
       kv("Command Hotkey", s.commandShortcut),
+      kv("Output", s.outputMode === "paste" ? `paste (${s.pasteShortcut})` : s.outputMode),
       kv("Injection", s.clipboardRestoreMode),
       kv("Restore Delay", `${s.clipboardRestoreDelayMs}ms`),
       kv("Timeslice", `${s.recorderTimesliceMs}ms`),
@@ -283,6 +286,27 @@ class ConsoleService {
       const enabled = ["on", "true", "1"].includes(normalized);
       this.applySettings({ wakePhraseEnabled: enabled });
       this._sendLine(`  Wake phrase -> ${enabled ? "on (Hey Whisper)" : "off"}`);
+      return;
+    }
+
+    if (key === "output") {
+      const normalized = value.toLowerCase();
+      if (!["paste", "type", "clipboard"].includes(normalized)) {
+        this._sendLine("  Invalid output mode. Use: paste | type | clipboard");
+        return;
+      }
+      this.applySettings({ outputMode: normalized });
+      this._sendLine(`  Output -> ${this.runtimeSettings.outputMode}`);
+      return;
+    }
+
+    if (key === "paste-key") {
+      this.applySettings({ pasteShortcut: value });
+      if (this.runtimeSettings.pasteShortcut !== value.trim()) {
+        this._sendLine(`  "${value}" is not a usable keystroke; kept ${this.runtimeSettings.pasteShortcut}`);
+        return;
+      }
+      this._sendLine(`  Paste keystroke -> ${this.runtimeSettings.pasteShortcut}`);
       return;
     }
 

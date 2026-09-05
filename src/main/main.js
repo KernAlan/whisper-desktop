@@ -165,6 +165,8 @@ const typingService = new TypingService({
   restoreDelayMs: runtimeSettings.clipboardRestoreDelayMs,
   pasteChunkChars: runtimeSettings.pasteChunkChars,
   pasteChunkDelayMs: runtimeSettings.pasteChunkDelayMs,
+  outputMode: runtimeSettings.outputMode,
+  pasteShortcut: runtimeSettings.pasteShortcut,
   targetContextService,
 });
 const textProcessingService = new TextProcessingService({
@@ -338,6 +340,10 @@ function syncRuntimeServices() {
     pasteChunkChars: runtimeSettings.pasteChunkChars,
     pasteChunkDelayMs: runtimeSettings.pasteChunkDelayMs,
   });
+  typingService.setOutputConfig({
+    outputMode: runtimeSettings.outputMode,
+    pasteShortcut: runtimeSettings.pasteShortcut,
+  });
   textProcessingService.setPolishConfig({
     polishChunkWords: runtimeSettings.polishChunkWords,
     polishMaxWords: runtimeSettings.polishMaxWords,
@@ -449,6 +455,8 @@ function getRuntimeConfigPayload() {
     dictationMode: runtimeSettings.dictationMode,
     doneHideWindowMs: runtimeSettings.doneHideWindowMs,
     clipboardRestoreMode: runtimeSettings.clipboardRestoreMode,
+    outputMode: runtimeSettings.outputMode,
+    pasteShortcut: runtimeSettings.pasteShortcut,
     clipboardRestoreDelayMs: runtimeSettings.clipboardRestoreDelayMs,
     pasteChunkChars: runtimeSettings.pasteChunkChars,
     pasteChunkDelayMs: runtimeSettings.pasteChunkDelayMs,

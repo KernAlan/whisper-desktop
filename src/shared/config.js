@@ -1,3 +1,5 @@
+const { isSupportedAccelerator } = require("../main/services/keystroke-format");
+
 function toInt(value, fallback) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -38,6 +40,8 @@ function loadConfig(env = process.env) {
       previewIntervalMs: toMs(env.APP_PREVIEW_INTERVAL_MS, 2500),
       dictationMode: env.APP_DICTATION_MODE || "polished",
       clipboardRestoreMode: env.APP_CLIPBOARD_RESTORE_MODE || "deferred",
+      outputMode: env.APP_OUTPUT_MODE || "paste",
+      pasteShortcut: env.APP_PASTE_SHORTCUT || "CommandOrControl+V",
       clipboardRestoreDelayMs: toMs(env.APP_CLIPBOARD_RESTORE_DELAY_MS, 120),
       pasteChunkChars: toInt(env.APP_PASTE_CHUNK_CHARS, 1500),
       pasteChunkDelayMs: toMs(env.APP_PASTE_CHUNK_DELAY_MS, 80),
@@ -76,6 +80,12 @@ function validateConfig(config) {
   }
   if (config.transcription.timeoutMs < 3000) {
     issues.push("GROQ_TRANSCRIPTION_TIMEOUT_MS must be >= 3000");
+  }
+  if (!["paste", "type", "clipboard"].includes(config.app.outputMode)) {
+    issues.push("APP_OUTPUT_MODE must be paste, type, or clipboard");
+  }
+  if (!isSupportedAccelerator(config.app.pasteShortcut)) {
+    issues.push(`APP_PASTE_SHORTCUT is not a usable keystroke: ${config.app.pasteShortcut}`);
   }
   if (!["deferred", "blocking", "off"].includes(config.app.clipboardRestoreMode)) {
     issues.push("APP_CLIPBOARD_RESTORE_MODE must be one of: deferred, blocking, off");

@@ -12,6 +12,7 @@ const fields = [
   "polishMaxWords",
   "pasteChunkChars",
   "pasteChunkDelayMs",
+  "pasteShortcut",
 ];
 
 const MIC_TEST_DURATION_MS = 5000;
@@ -20,6 +21,8 @@ const RESET_CONFIRM_TIMEOUT_MS = 4000;
 
 let config = null;
 let dictationMode = "polished";
+let outputMode = "paste";
+let clipboardRestoreMode = "deferred";
 let suggestions = [];
 let micTestRunning = false;
 let resetArmed = false;
@@ -66,6 +69,23 @@ function setDictationMode(value) {
   updateDirtyState();
 }
 
+function setOutputMode(value) {
+  outputMode = ["paste", "type", "clipboard"].includes(value) ? value : "paste";
+  document.querySelectorAll("#outputMode button").forEach((button) => {
+    button.classList.toggle("active", button.dataset.output === outputMode);
+  });
+  // The paste keystroke only means anything in paste mode.
+  const row = byId("pasteShortcutRow");
+  if (row) row.hidden = outputMode !== "paste";
+}
+
+function setClipboardRestoreMode(value) {
+  clipboardRestoreMode = ["deferred", "blocking", "off"].includes(value) ? value : "deferred";
+  document.querySelectorAll("#clipboardRestoreMode button").forEach((button) => {
+    button.classList.toggle("active", button.dataset.clipboard === clipboardRestoreMode);
+  });
+}
+
 function numberValue(id) {
   const value = Number(byId(id).value);
   return Number.isFinite(value) ? value : undefined;
@@ -103,6 +123,8 @@ function renderConfig(nextConfig) {
   const wakePhrase = byId("wakePhraseEnabled");
   if (wakePhrase) wakePhrase.checked = Boolean(config.wakePhraseEnabled);
   setDictationMode(config.dictationMode);
+  setOutputMode(config.outputMode);
+  setClipboardRestoreMode(config.clipboardRestoreMode);
   renderCredentialStatus(config.credential);
   renderTerms(config.dictionaryTerms || []);
   updateDirtyState();
@@ -269,6 +291,7 @@ async function save() {
     polishMaxWords: numberValue("polishMaxWords"),
     pasteChunkChars: numberValue("pasteChunkChars"),
     pasteChunkDelayMs: numberValue("pasteChunkDelayMs"),
+    pasteShortcut: byId("pasteShortcut").value.trim(),
   };
 
   try {
@@ -463,6 +486,22 @@ async function testMic() {
     micTestRunning = false;
   }
 }
+
+document.querySelectorAll("#outputMode button").forEach((button) => {
+  button.addEventListener("click", () => {
+    if (button.dataset.output === outputMode) return;
+    setOutputMode(button.dataset.output);
+    autosave({ outputMode }, `Output set to ${outputMode === "clipboard" ? "clipboard only" : outputMode}`);
+  });
+});
+
+document.querySelectorAll("#clipboardRestoreMode button").forEach((button) => {
+  button.addEventListener("click", () => {
+    if (button.dataset.clipboard === clipboardRestoreMode) return;
+    setClipboardRestoreMode(button.dataset.clipboard);
+    autosave({ clipboardRestoreMode }, "Clipboard behaviour saved");
+  });
+});
 
 document.querySelectorAll("#dictationMode button").forEach((button) => {
   button.addEventListener("click", () => {

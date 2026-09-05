@@ -79,6 +79,10 @@ By default the transcript is lightly polished before pasting: content words are 
 
 **System tray.** The window is frameless and stays out of the taskbar, so the tray icon is how you reach the app without the hotkey. Right-click it to show the window, open or close Settings, toggle starting on login, restart the app, or quit. Left-click shows the window. Regenerate the icon with `node scripts/make-tray-icon.js` if you want to change the artwork.
 
+**Output methods.** Three ways to deliver the text, in Settings or with `node cli.js set output <mode>`. **Paste** (default) copies the text and sends the paste keystroke, which you can change to something like `CommandOrControl+Shift+V` for apps where that means paste-without-formatting. **Type** simulates the keystrokes directly and never touches the clipboard, which is the fallback for apps that refuse a pasted insert; it is slower and can mangle unusual characters. **Clipboard only** puts the text on the clipboard and stops there.
+
+**Clipboard.** After a paste, your previous clipboard is restored by default. Choose *Keep the text* if you would rather the dictation stay on the clipboard, or use Type mode if you want the clipboard left alone entirely (`APP_CLIPBOARD_RESTORE_MODE`, or the Clipboard section in Settings).
+
 **Long recordings.** Short dictations go up as one transcription request. Longer ones are persisted and transcribed as silence-aware checkpoints, then assembled before polishing. Recordings over 20MB are split to stay under the API size limit; recordings over `GROQ_POLISH_MAX_WORDS` skip the polish pass and paste raw. Long inserts are pasted in chunks, and your clipboard is saved once and restored at the end (set `APP_CLIPBOARD_RESTORE_MODE=off` if you'd rather keep the inserted text on the clipboard).
 
 ### Command mode

@@ -77,6 +77,8 @@ By default the transcript is lightly polished before pasting: content words are 
 
 **Wake phrase.** Enable it in Settings or with `node cli.js set wake on`, then say "Hey Whisper" to start dictating and "Stop Whisper" to finish. Detection runs locally. Ambient audio stays in memory on your machine, and nothing is sent to Groq until you've actually started dictating. A short pre-speech timeout cancels accidental activations, and the hotkey still works as the manual fallback. The two are interchangeable: with the wake phrase on, "Stop Whisper" also ends dictation you started with the hotkey. Both phrases are stripped from the transcript before it is pasted, so ending with "Stop Whisper" never leaves a "stop whispering" fragment behind.
 
+**System tray.** The window is frameless and stays out of the taskbar, so the tray icon is how you reach the app without the hotkey. Right-click it to show the window, open or close Settings, toggle starting on login, restart the app, or quit. Left-click shows the window. Regenerate the icon with `node scripts/make-tray-icon.js` if you want to change the artwork.
+
 **Long recordings.** Short dictations go up as one transcription request. Longer ones are persisted and transcribed as silence-aware checkpoints, then assembled before polishing. Recordings over 20MB are split to stay under the API size limit; recordings over `GROQ_POLISH_MAX_WORDS` skip the polish pass and paste raw. Long inserts are pasted in chunks, and your clipboard is saved once and restored at the end (set `APP_CLIPBOARD_RESTORE_MODE=off` if you'd rather keep the inserted text on the clipboard).
 
 ### Command mode

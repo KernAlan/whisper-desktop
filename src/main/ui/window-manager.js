@@ -77,6 +77,23 @@ class WindowManager {
     this.settingsWindow.focus();
   }
 
+  isSettingsVisible() {
+    return Boolean(
+      this.settingsWindow && !this.settingsWindow.isDestroyed() && this.settingsWindow.isVisible()
+    );
+  }
+
+  // Closing rather than hiding, so the tray leaves the window in the same state
+  // the user's own close button does. Returns whether the window is now open.
+  toggleSettingsWindow() {
+    if (this.isSettingsVisible()) {
+      this.settingsWindow.close();
+      return false;
+    }
+    this.showSettingsWindow();
+    return true;
+  }
+
   createMenu({ onShowApp, onSettings, onQuit }) {
     const template = [
       {

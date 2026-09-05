@@ -7,11 +7,15 @@ const {
   powerMonitor,
   safeStorage,
   systemPreferences,
+  Menu,
+  Tray,
+  nativeImage,
 } = require("electron");
 const path = require("path");
 const { randomUUID } = require("node:crypto");
 const { loadConfig, validateConfig } = require("../shared/config");
 const { WindowManager } = require("./ui/window-manager");
+const { TrayController } = require("./ui/tray-controller");
 const { TranscriptionService } = require("./services/transcription-service");
 const { TypingService } = require("./services/typing-service");
 const { DiagnosticsService } = require("./services/diagnostics-service");
@@ -62,6 +66,25 @@ const UNDO_WINDOW_MS = 60 * 1000;
 const transcriptStore = new TranscriptStore({ dir: transcriptDir, logger });
 const diagnostics = new DiagnosticsService(config, logger, { transcriptStore });
 const windowManager = new WindowManager({ hideWindowMs: config.app.hideWindowMs });
+
+// relaunch() only queues the new process; the current one still has to exit for
+// the single-instance lock to be released to it.
+function restartApp() {
+  logger.log("[Tray] Restarting.");
+  app.relaunch();
+  app.quit();
+}
+
+const trayController = new TrayController({
+  Tray,
+  Menu,
+  nativeImage,
+  app,
+  logger,
+  onShowApp: () => windowManager.showWindow({ autoHide: false }),
+  onToggleSettings: () => windowManager.toggleSettingsWindow(),
+  onRestart: restartApp,
+});
 const dictionaryService = new DictionaryService({ filePath: dictionaryPath, logger });
 const credentialService = new CredentialService({
   filePath: path.join(app.getPath("userData"), "credentials.json"),
@@ -499,6 +522,7 @@ app.on("ready", async () => {
   await dictionaryService.load();
   await transcriptionService.pruneRecovery();
   createAndWireMainWindow();
+  trayController.start();
   consoleService.start();
   // Compile the native declarations now, so the first paste of the session is as
   // fast as every later one.
@@ -514,6 +538,7 @@ app.on("ready", async () => {
 app.on("will-quit", () => {
   globalShortcut.unregisterAll();
   targetContextService.dispose();
+  trayController.destroy();
 });
 
 app.on("window-all-closed", () => {

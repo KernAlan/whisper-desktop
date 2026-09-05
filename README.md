@@ -83,6 +83,8 @@ By default the transcript is lightly polished before pasting: content words are 
 
 **Clipboard.** After a paste, your previous clipboard is restored by default. Choose *Keep the text* if you would rather the dictation stay on the clipboard, or use Type mode if you want the clipboard left alone entirely (`APP_CLIPBOARD_RESTORE_MODE`, or the Clipboard section in Settings).
 
+**Auto submit.** Off by default. Set it to Enter, Ctrl+Enter, or any keystroke you like, and it fires once the text has landed (`APP_AUTO_SUBMIT`, or `node cli.js set submit <mode>`). It never fires in Clipboard only mode, because nothing was inserted, and a failed submit is reported without turning a good insert into an error. `APP_AUTO_SUBMIT_DELAY_MS` controls how long it waits for the app to take the text first.
+
 **Long recordings.** Short dictations go up as one transcription request. Longer ones are persisted and transcribed as silence-aware checkpoints, then assembled before polishing. Recordings over 20MB are split to stay under the API size limit; recordings over `GROQ_POLISH_MAX_WORDS` skip the polish pass and paste raw. Long inserts are pasted in chunks, and your clipboard is saved once and restored at the end (set `APP_CLIPBOARD_RESTORE_MODE=off` if you'd rather keep the inserted text on the clipboard).
 
 ### Command mode

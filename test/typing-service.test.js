@@ -252,3 +252,89 @@ test("setOutputConfig rejects values it does not understand", () => {
   assert.equal(typing.outputMode, "type");
   assert.equal(typing.pasteShortcut, "Ctrl+Shift+V");
 });
+
+// --- Auto submit ------------------------------------------------------------
+
+function submitHarness(overrides = {}) {
+  const sent = [];
+  const typing = new TypingService({
+    logger: { warn() {}, error() {} },
+    clipboardApi: fakeClipboard(),
+    autoSubmitDelayMs: 0,
+    targetContextService: {
+      sendPaste: async () => sent.push("paste"),
+      sendText: async () => sent.push("type"),
+      sendKeystroke: async (_ctx, accel) => sent.push(`key:${accel}`),
+    },
+    ...overrides,
+  });
+  return { typing, sent };
+}
+
+test("auto submit is off by default", async () => {
+  const { typing, sent } = submitHarness();
+  const result = await typing.pasteText("hi", { targetContext: { available: true } });
+  assert.deepEqual(sent, ["paste"]);
+  assert.equal(result.submitted, undefined);
+});
+
+test("auto submit sends the chosen keystroke after the text", async () => {
+  for (const [mode, expected] of [
+    ["enter", "key:Enter"],
+    ["ctrl-enter", "key:CommandOrControl+Enter"],
+  ]) {
+    const { typing, sent } = submitHarness({ autoSubmit: mode });
+    const result = await typing.pasteText("hi", { targetContext: { available: true } });
+    // Order matters: submitting before the text lands sends an empty message.
+    assert.deepEqual(sent, ["paste", expected], mode);
+    assert.equal(result.submitted, true);
+  }
+});
+
+test("a custom submit keystroke is used when set", async () => {
+  const { typing, sent } = submitHarness({
+    autoSubmit: "custom",
+    autoSubmitShortcut: "CommandOrControl+Shift+Enter",
+  });
+  await typing.pasteText("hi", { targetContext: { available: true } });
+  assert.deepEqual(sent, ["paste", "key:CommandOrControl+Shift+Enter"]);
+});
+
+test("auto submit also follows typed output", async () => {
+  const { typing, sent } = submitHarness({ outputMode: "type", autoSubmit: "enter" });
+  await typing.pasteText("hi", { targetContext: { available: true } });
+  assert.deepEqual(sent, ["type", "key:Enter"]);
+});
+
+// Nothing was inserted anywhere, so there is nothing to submit.
+test("clipboard-only output never submits", async () => {
+  const { typing, sent } = submitHarness({ outputMode: "clipboard", autoSubmit: "enter" });
+  const result = await typing.pasteText("hi", { targetContext: { available: true } });
+  assert.deepEqual(sent, []);
+  assert.equal(result.submitted, undefined);
+});
+
+// The text is already in the field; a failed Enter must not report a failed insert.
+test("a failed submit does not fail the insertion", async () => {
+  const { typing } = submitHarness({
+    autoSubmit: "enter",
+    targetContextService: {
+      sendPaste: async () => {},
+      sendKeystroke: async () => {
+        throw new Error("target gone");
+      },
+    },
+  });
+  const result = await typing.pasteText("hi", { targetContext: { available: true } });
+  assert.equal(result.ok, true);
+  assert.equal(result.submitted, false);
+  assert.match(result.submitError, /target gone/);
+});
+
+test("setAutoSubmitConfig rejects values it does not understand", () => {
+  const typing = service();
+  typing.setAutoSubmitConfig({ autoSubmit: "yolo", autoSubmitShortcut: "  ", autoSubmitDelayMs: -5 });
+  assert.equal(typing.autoSubmit, "off");
+  assert.equal(typing.autoSubmitShortcut, "Enter");
+  assert.equal(typing.autoSubmitDelayMs, 120);
+});

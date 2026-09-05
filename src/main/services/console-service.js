@@ -169,6 +169,7 @@ class ConsoleService {
       kv("set restore-delay <ms>", "Clipboard restore delay"),
       kv("set output <mode>", "How text is inserted: paste | type | clipboard"),
       kv("set paste-key <keys>", "Keystroke used by paste mode"),
+      kv("set submit <mode>", "Auto submit: off | enter | ctrl-enter | <keys>"),
       kv("refresh mic", "Refresh microphone"),
       kv("test mic", "Test microphone levels"),
       kv("devices", "List audio inputs"),
@@ -206,6 +207,7 @@ class ConsoleService {
       kv("Hotkey", s.shortcut),
       kv("Command Hotkey", s.commandShortcut),
       kv("Output", s.outputMode === "paste" ? `paste (${s.pasteShortcut})` : s.outputMode),
+      kv("Auto Submit", s.autoSubmit === "custom" ? `custom (${s.autoSubmitShortcut})` : s.autoSubmit),
       kv("Injection", s.clipboardRestoreMode),
       kv("Restore Delay", `${s.clipboardRestoreDelayMs}ms`),
       kv("Timeslice", `${s.recorderTimesliceMs}ms`),
@@ -307,6 +309,26 @@ class ConsoleService {
         return;
       }
       this._sendLine(`  Paste keystroke -> ${this.runtimeSettings.pasteShortcut}`);
+      return;
+    }
+
+    if (key === "submit" || key === "auto-submit") {
+      const normalized = value.toLowerCase();
+      if (["off", "enter", "ctrl-enter"].includes(normalized)) {
+        this.applySettings({ autoSubmit: normalized });
+        this._sendLine(`  Auto submit -> ${this.runtimeSettings.autoSubmit}`);
+        return;
+      }
+      // Anything else is read as the custom keystroke itself. The mode only
+      // changes if the keystroke is usable, so a typo cannot leave auto-submit
+      // switched on and pointing at the wrong key.
+      this.applySettings({ autoSubmitShortcut: value });
+      if (this.runtimeSettings.autoSubmitShortcut !== value.trim()) {
+        this._sendLine(`  "${value}" is not a usable keystroke; auto submit unchanged (${this.runtimeSettings.autoSubmit})`);
+        return;
+      }
+      this.applySettings({ autoSubmit: "custom" });
+      this._sendLine(`  Auto submit -> custom (${this.runtimeSettings.autoSubmitShortcut})`);
       return;
     }
 

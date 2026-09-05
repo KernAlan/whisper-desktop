@@ -36,6 +36,9 @@ class TypingService {
     pasteChunkDelayMs = 80,
     outputMode = "paste",
     pasteShortcut = "CommandOrControl+V",
+    autoSubmit = "off",
+    autoSubmitShortcut = "Enter",
+    autoSubmitDelayMs = 120,
     platform = process.platform,
     execFileRunner = execFileAsync,
     targetContextService = null,
@@ -48,6 +51,9 @@ class TypingService {
     this.pasteChunkDelayMs = pasteChunkDelayMs;
     this.outputMode = outputMode;
     this.pasteShortcut = pasteShortcut;
+    this.autoSubmit = autoSubmit;
+    this.autoSubmitShortcut = autoSubmitShortcut;
+    this.autoSubmitDelayMs = autoSubmitDelayMs;
     this.platform = platform;
     this.execFileAsync = execFileRunner;
     this.targetContextService = targetContextService;
@@ -67,6 +73,18 @@ class TypingService {
     }
     if (typeof pasteShortcut === "string" && pasteShortcut.trim()) {
       this.pasteShortcut = pasteShortcut.trim();
+    }
+  }
+
+  setAutoSubmitConfig({ autoSubmit, autoSubmitShortcut, autoSubmitDelayMs }) {
+    if (["off", "enter", "ctrl-enter", "custom"].includes(autoSubmit)) {
+      this.autoSubmit = autoSubmit;
+    }
+    if (typeof autoSubmitShortcut === "string" && autoSubmitShortcut.trim()) {
+      this.autoSubmitShortcut = autoSubmitShortcut.trim();
+    }
+    if (Number.isFinite(autoSubmitDelayMs) && autoSubmitDelayMs >= 0) {
+      this.autoSubmitDelayMs = autoSubmitDelayMs;
     }
   }
 
@@ -134,9 +152,11 @@ class TypingService {
           await new Promise((resolve) => setTimeout(resolve, this.pasteChunkDelayMs));
         }
       }
+      const submit = await this._maybeAutoSubmit(targetContext);
       return {
         ok: true,
         outputMode: "type",
+        ...submit,
         pasteMs: Date.now() - startedAt,
         restoreMs: 0,
         restoreMode: this.restoreMode,
@@ -207,6 +227,7 @@ class TypingService {
         }
       }
       pasteMs = Date.now() - startedAt;
+      const submit = await this._maybeAutoSubmit(targetContext);
 
       if (keepTextOnClipboard) {
         this.clipboard.writeText(finalText);
@@ -225,6 +246,7 @@ class TypingService {
       return {
         ok: true,
         outputMode: "paste",
+        ...submit,
         pasteMs,
         restoreMs,
         restoreMode: this.restoreMode,
@@ -270,6 +292,38 @@ class TypingService {
       "commandorcontrol+v";
   }
 
+  // Auto-submit is off by default on purpose: an accidental Enter sends a
+  // half-finished message, which is far worse than having to press it yourself.
+  _autoSubmitAccelerator() {
+    if (this.autoSubmit === "enter") return "Enter";
+    if (this.autoSubmit === "ctrl-enter") return "CommandOrControl+Enter";
+    if (this.autoSubmit === "custom") return String(this.autoSubmitShortcut || "").trim();
+    return "";
+  }
+
+  // Runs only after the text actually landed in the target. Clipboard-only mode
+  // never gets here: nothing was inserted, so there is nothing to submit.
+  async _maybeAutoSubmit(targetContext) {
+    const accelerator = this._autoSubmitAccelerator();
+    // Nothing reported when auto-submit is off, so `submitted` always means a
+    // submit was actually attempted.
+    if (!accelerator) return {};
+    try {
+      if (this.autoSubmitDelayMs > 0) {
+        // The target needs a moment to take the insert before the submit lands,
+        // or the keystroke can beat the text into the field.
+        await new Promise((resolve) => setTimeout(resolve, this.autoSubmitDelayMs));
+      }
+      await this._sendAccelerator(accelerator, targetContext);
+      return { submitted: true };
+    } catch (error) {
+      // The text is already in. A failed submit is worth reporting but it is not
+      // a failed insertion, so it must not turn a good paste into an error.
+      this.logger.warn("Auto-submit failed:", error);
+      return { submitted: false, submitError: error?.message || "Auto-submit failed" };
+    }
+  }
+
   async _sendText(text, targetContext) {
     if (targetContext !== undefined && this.targetContextService) {
       return this.targetContextService.sendText(targetContext, text);
@@ -299,17 +353,17 @@ class TypingService {
     }
   }
 
-  async _sendCustomShortcut(targetContext) {
+  async _sendAccelerator(accelerator, targetContext) {
     if (targetContext !== undefined && this.targetContextService) {
-      return this.targetContextService.sendKeystroke(targetContext, this.pasteShortcut);
+      return this.targetContextService.sendKeystroke(targetContext, accelerator);
     }
     if (this.platform === "darwin") {
       await this.execFileAsync("osascript", [
         "-e",
-        `tell application "System Events" to ${toAppleScript(this.pasteShortcut, this.platform)}`,
+        `tell application "System Events" to ${toAppleScript(accelerator, this.platform)}`,
       ]);
     } else if (this.platform === "win32") {
-      const keys = escapePowerShellSingleQuoted(toSendKeys(this.pasteShortcut, this.platform));
+      const keys = escapePowerShellSingleQuoted(toSendKeys(accelerator, this.platform));
       await this.execFileAsync("powershell.exe", [
         "-NoProfile",
         "-NonInteractive",
@@ -317,13 +371,13 @@ class TypingService {
         `$ws = New-Object -ComObject WScript.Shell; $ws.SendKeys('${keys}')`,
       ]);
     } else {
-      await this._sendLinuxShortcut(toXdotool(this.pasteShortcut, this.platform));
+      await this._sendLinuxShortcut(toXdotool(accelerator, this.platform));
     }
   }
 
   async _sendPasteShortcut(targetContext) {
     if (!this._isDefaultPasteShortcut()) {
-      return this._sendCustomShortcut(targetContext);
+      return this._sendAccelerator(this.pasteShortcut, targetContext);
     }
     if (targetContext !== undefined && this.targetContextService) {
       return this.targetContextService.sendPaste(targetContext);

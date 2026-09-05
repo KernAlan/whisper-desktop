@@ -529,6 +529,27 @@
       </section>
 
       <section>
+        <h2>Auto Submit</h2>
+        <div class="segmented" id="autoSubmit">
+          <button type="button" data-submit="off">Off<small>Leaves the text for you to send</small></button>
+          <button type="button" data-submit="enter">Enter<small>Presses Enter after inserting</small></button>
+          <button type="button" data-submit="ctrl-enter">Ctrl+Enter<small>For apps where Enter adds a newline</small></button>
+          <button type="button" data-submit="custom">Custom<small>Any keystroke you choose</small></button>
+        </div>
+        <p class="hint">Takes effect as soon as you pick it. Off by default: an accidental send is worse than pressing Enter yourself. Never fires in Clipboard only mode, since nothing was inserted.</p>
+        <div class="row" id="autoSubmitShortcutRow">
+          <div>
+            <label for="autoSubmitShortcut">Submit keystroke</label>
+            <input id="autoSubmitShortcut" spellcheck="false" placeholder="Enter">
+          </div>
+          <div>
+            <label for="autoSubmitDelayMs">Delay before submitting (ms)</label>
+            <input id="autoSubmitDelayMs" type="number" min="0" step="10">
+          </div>
+        </div>
+      </section>
+
+      <section>
         <h2>Clipboard</h2>
         <div class="segmented" id="clipboardRestoreMode">
           <button type="button" data-clipboard="deferred">Restore<small>Puts your previous clipboard back afterwards</small></button>

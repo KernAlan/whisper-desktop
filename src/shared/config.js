@@ -42,6 +42,9 @@ function loadConfig(env = process.env) {
       clipboardRestoreMode: env.APP_CLIPBOARD_RESTORE_MODE || "deferred",
       outputMode: env.APP_OUTPUT_MODE || "paste",
       pasteShortcut: env.APP_PASTE_SHORTCUT || "CommandOrControl+V",
+      autoSubmit: env.APP_AUTO_SUBMIT || "off",
+      autoSubmitShortcut: env.APP_AUTO_SUBMIT_SHORTCUT || "Enter",
+      autoSubmitDelayMs: toMs(env.APP_AUTO_SUBMIT_DELAY_MS, 120),
       clipboardRestoreDelayMs: toMs(env.APP_CLIPBOARD_RESTORE_DELAY_MS, 120),
       pasteChunkChars: toInt(env.APP_PASTE_CHUNK_CHARS, 1500),
       pasteChunkDelayMs: toMs(env.APP_PASTE_CHUNK_DELAY_MS, 80),
@@ -83,6 +86,15 @@ function validateConfig(config) {
   }
   if (!["paste", "type", "clipboard"].includes(config.app.outputMode)) {
     issues.push("APP_OUTPUT_MODE must be paste, type, or clipboard");
+  }
+  if (!["off", "enter", "ctrl-enter", "custom"].includes(config.app.autoSubmit)) {
+    issues.push("APP_AUTO_SUBMIT must be off, enter, ctrl-enter, or custom");
+  }
+  if (
+    config.app.autoSubmit === "custom" &&
+    !isSupportedAccelerator(config.app.autoSubmitShortcut)
+  ) {
+    issues.push(`APP_AUTO_SUBMIT_SHORTCUT is not a usable keystroke: ${config.app.autoSubmitShortcut}`);
   }
   if (!isSupportedAccelerator(config.app.pasteShortcut)) {
     issues.push(`APP_PASTE_SHORTCUT is not a usable keystroke: ${config.app.pasteShortcut}`);

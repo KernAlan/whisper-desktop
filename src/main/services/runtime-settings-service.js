@@ -17,6 +17,9 @@ const MUTABLE_KEYS = [
   "clipboardRestoreMode",
   "outputMode",
   "pasteShortcut",
+  "autoSubmit",
+  "autoSubmitShortcut",
+  "autoSubmitDelayMs",
   "clipboardRestoreDelayMs",
   "pasteChunkChars",
   "pasteChunkDelayMs",
@@ -53,6 +56,9 @@ function createRuntimeDefaults(config) {
     clipboardRestoreMode: config.app.clipboardRestoreMode,
     outputMode: config.app.outputMode,
     pasteShortcut: config.app.pasteShortcut,
+    autoSubmit: config.app.autoSubmit,
+    autoSubmitShortcut: config.app.autoSubmitShortcut,
+    autoSubmitDelayMs: config.app.autoSubmitDelayMs,
     clipboardRestoreDelayMs: config.app.clipboardRestoreDelayMs,
     pasteChunkChars: config.app.pasteChunkChars,
     pasteChunkDelayMs: config.app.pasteChunkDelayMs,
@@ -146,6 +152,20 @@ function applyRuntimeSettings(current, payload = {}) {
 
   if (["paste", "type", "clipboard"].includes(payload.outputMode)) {
     next.outputMode = payload.outputMode;
+  }
+
+  if (["off", "enter", "ctrl-enter", "custom"].includes(payload.autoSubmit)) {
+    next.autoSubmit = payload.autoSubmit;
+  }
+
+  if (typeof payload.autoSubmitShortcut === "string" && payload.autoSubmitShortcut.trim()) {
+    const submit = payload.autoSubmitShortcut.trim();
+    if (isSupportedAccelerator(submit)) next.autoSubmitShortcut = submit;
+  }
+
+  const autoSubmitDelayMs = cleanNumber(payload.autoSubmitDelayMs);
+  if (autoSubmitDelayMs !== null && autoSubmitDelayMs >= 0) {
+    next.autoSubmitDelayMs = autoSubmitDelayMs;
   }
 
   // A keystroke that cannot be encoded would be sent into whatever the user is

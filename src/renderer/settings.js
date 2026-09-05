@@ -13,6 +13,8 @@ const fields = [
   "pasteChunkChars",
   "pasteChunkDelayMs",
   "pasteShortcut",
+  "autoSubmitShortcut",
+  "autoSubmitDelayMs",
 ];
 
 const MIC_TEST_DURATION_MS = 5000;
@@ -23,6 +25,7 @@ let config = null;
 let dictationMode = "polished";
 let outputMode = "paste";
 let clipboardRestoreMode = "deferred";
+let autoSubmit = "off";
 let suggestions = [];
 let micTestRunning = false;
 let resetArmed = false;
@@ -86,6 +89,16 @@ function setClipboardRestoreMode(value) {
   });
 }
 
+function setAutoSubmit(value) {
+  autoSubmit = ["off", "enter", "ctrl-enter", "custom"].includes(value) ? value : "off";
+  document.querySelectorAll("#autoSubmit button").forEach((button) => {
+    button.classList.toggle("active", button.dataset.submit === autoSubmit);
+  });
+  // The keystroke box only matters when the user is choosing one.
+  const row = byId("autoSubmitShortcutRow");
+  if (row) row.hidden = autoSubmit !== "custom";
+}
+
 function numberValue(id) {
   const value = Number(byId(id).value);
   return Number.isFinite(value) ? value : undefined;
@@ -125,6 +138,7 @@ function renderConfig(nextConfig) {
   setDictationMode(config.dictationMode);
   setOutputMode(config.outputMode);
   setClipboardRestoreMode(config.clipboardRestoreMode);
+  setAutoSubmit(config.autoSubmit);
   renderCredentialStatus(config.credential);
   renderTerms(config.dictionaryTerms || []);
   updateDirtyState();
@@ -292,6 +306,8 @@ async function save() {
     pasteChunkChars: numberValue("pasteChunkChars"),
     pasteChunkDelayMs: numberValue("pasteChunkDelayMs"),
     pasteShortcut: byId("pasteShortcut").value.trim(),
+    autoSubmitShortcut: byId("autoSubmitShortcut").value.trim(),
+    autoSubmitDelayMs: numberValue("autoSubmitDelayMs"),
   };
 
   try {
@@ -486,6 +502,14 @@ async function testMic() {
     micTestRunning = false;
   }
 }
+
+document.querySelectorAll("#autoSubmit button").forEach((button) => {
+  button.addEventListener("click", () => {
+    if (button.dataset.submit === autoSubmit) return;
+    setAutoSubmit(button.dataset.submit);
+    autosave({ autoSubmit }, `Auto submit set to ${autoSubmit}`);
+  });
+});
 
 document.querySelectorAll("#outputMode button").forEach((button) => {
   button.addEventListener("click", () => {

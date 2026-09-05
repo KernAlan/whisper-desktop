@@ -202,3 +202,73 @@ test("split text chunks respects word limit", () => {
     "Eleven twelve thirteen.",
   ]);
 });
+
+// --- Dictation profiles -----------------------------------------------------
+
+function profileService(capture) {
+  const text = new TextProcessingService({
+    apiKey: "test",
+    model: "test",
+    timeoutMs: 1000,
+    logger: { warn() {}, log() {} },
+  });
+  text.groq = {
+    chat: {
+      completions: {
+        create: async (request) => {
+          capture.push(request);
+          return { choices: [{ message: { content: "REWRITTEN" } }] };
+        },
+      },
+    },
+  };
+  return text;
+}
+
+test("a profile prompt drives the rewrite instead of the punctuation rules", async () => {
+  const requests = [];
+  const text = profileService(requests);
+  const output = await text.polishDictation({
+    transcript: "make this formal please",
+    profile: { id: "p1", name: "Formal", prompt: "Rewrite in a formal register." },
+  });
+
+  assert.equal(output, "REWRITTEN");
+  const system = requests[0].messages[0].content;
+  assert.match(system, /Rewrite in a formal register\./);
+  // The punctuation-only rules must not be in play: the profile is asking for
+  // an edit, which those rules explicitly forbid.
+  assert.doesNotMatch(system, /You do not edit it/);
+});
+
+// The guard exists to stop the model editing when asked only to punctuate. A
+// profile is asking it to edit, so a shortened result must survive.
+test("a profile rewrite is not rejected for dropping words", async () => {
+  const text = profileService([]);
+  text.groq.chat.completions.create = async () => ({
+    choices: [{ message: { content: "Short." } }],
+  });
+
+  const output = await text.polishDictation({
+    transcript: "this is a much longer dictation with many more words in it than the result",
+    profile: { id: "p1", name: "Summary", prompt: "Summarise in one sentence." },
+  });
+  assert.equal(output, "Short.");
+});
+
+test("no profile keeps the default polish path", async () => {
+  const requests = [];
+  const text = profileService(requests);
+  await text.polishDictation({ transcript: "hello there" });
+  assert.match(requests[0].messages[0].content, /You do not edit it/);
+});
+
+test("an empty profile response falls back to the raw transcript", async () => {
+  const text = profileService([]);
+  text.groq.chat.completions.create = async () => ({ choices: [{ message: { content: "" } }] });
+  const output = await text.polishDictation({
+    transcript: "keep me",
+    profile: { id: "p1", name: "Broken", prompt: "do something" },
+  });
+  assert.equal(output, "keep me");
+});

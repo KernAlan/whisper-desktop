@@ -85,6 +85,10 @@ By default the transcript is lightly polished before pasting: content words are 
 
 **Auto submit.** Off by default. Set it to Enter, Ctrl+Enter, or any keystroke you like, and it fires once the text has landed (`APP_AUTO_SUBMIT`, or `node cli.js set submit <mode>`). It never fires in Clipboard only mode, because nothing was inserted, and a failed submit is reported without turning a good insert into an error. `APP_AUTO_SUBMIT_DELAY_MS` controls how long it waits for the app to take the text first.
 
+**Dictation profiles.** A profile is a set of instructions the model applies to the transcript instead of the standard punctuation-only clean-up: "rewrite in a formal register", "as short bullet points". Add them in Settings, give any of them a hotkey, and set a cycle hotkey to rotate Standard -> each profile -> Standard. `node cli.js profile` lists them, `profile use <name>` switches, `profile next` cycles.
+
+Profiles rewrite rather than punctuate, so the "keep every word" guard that protects the default polish is deliberately not applied to them. Picking a profile switches dictation to Polished, since a profile is an instruction for the model and Fast mode does not call one.
+
 **Long recordings.** Short dictations go up as one transcription request. Longer ones are persisted and transcribed as silence-aware checkpoints, then assembled before polishing. Recordings over 20MB are split to stay under the API size limit; recordings over `GROQ_POLISH_MAX_WORDS` skip the polish pass and paste raw. Long inserts are pasted in chunks, and your clipboard is saved once and restored at the end (set `APP_CLIPBOARD_RESTORE_MODE=off` if you'd rather keep the inserted text on the clipboard).
 
 ### Command mode

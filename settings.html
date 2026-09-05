@@ -314,6 +314,32 @@
         grid-template-columns: minmax(0, 1fr) auto;
       }
 
+      .profile-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin: 12px 0;
+      }
+
+      .profile-row {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 12px;
+        border: 1px solid #3a332a;
+        border-radius: 8px;
+      }
+
+      .profile-row.active {
+        border-color: #d4a437;
+      }
+
+      .profile-row .meta {
+        color: #948a7c;
+        font-size: 12px;
+      }
+
       .terms {
         display: flex;
         flex-wrap: wrap;
@@ -590,6 +616,38 @@
           <span>Listen locally for "Hey Whisper"</span>
         </label>
         <p class="hint">Takes effect as soon as you switch it. The wake detector runs on this computer and does not send audio anywhere until it activates dictation.</p>
+      </section>
+
+      <section>
+        <h2>Dictation Profiles</h2>
+        <p class="hint">Each profile is a set of instructions the model applies to the transcript instead of the standard punctuation-only clean-up. Profiles rewrite, so the usual "keep every word" guard does not apply to them.</p>
+        <div class="profile-list" id="profileList"></div>
+        <div class="term-entry">
+          <div>
+            <label for="profileName">Name</label>
+            <input id="profileName" spellcheck="false" placeholder="Formal email">
+          </div>
+          <div style="align-self: end;">
+            <button id="addProfile" type="button">Add</button>
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label for="profilePrompt">Instructions</label>
+            <input id="profilePrompt" spellcheck="false" placeholder="Rewrite in a formal register, keeping the meaning.">
+          </div>
+          <div>
+            <label for="profileHotkey">Hotkey (optional)</label>
+            <input id="profileHotkey" spellcheck="false" placeholder="CommandOrControl+Alt+1">
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label for="profileCycleShortcut">Cycle profiles hotkey</label>
+            <input id="profileCycleShortcut" spellcheck="false" placeholder="CommandOrControl+Alt+P, or off">
+          </div>
+        </div>
+        <p class="hint">Cycling goes Standard, then each profile, then back, so there is always a way back to the plain polish. Picking a profile switches dictation to Polished, since a profile is an instruction for the model.</p>
       </section>
 
       <section>

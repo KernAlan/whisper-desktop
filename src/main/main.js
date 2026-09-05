@@ -310,7 +310,62 @@ function setupShortcut() {
     }
   }
 
+  registerProfileShortcuts();
   return { ...shortcutRegistration };
+}
+
+function activeProfile() {
+  const id = runtimeSettings.activeProfileId;
+  if (!id) return null;
+  return (runtimeSettings.dictationProfiles || []).find((p) => p.id === id) || null;
+}
+
+function selectProfile(profileId) {
+  const profiles = runtimeSettings.dictationProfiles || [];
+  const profile = profiles.find((p) => p.id === profileId) || null;
+  // Choosing a profile means "polish with these instructions", so it implies the
+  // LLM pass runs -- picking one while in fast mode would otherwise do nothing.
+  applySettings(
+    profile
+      ? { activeProfileId: profile.id, dictationMode: "polished" }
+      : { activeProfileId: "" }
+  );
+  const label = profile ? profile.name : "Standard polish";
+  logger.log(`[Profile] ${label}`);
+  broadcastRuntimeConfig();
+  return profile;
+}
+
+// Cycles Standard -> each profile -> Standard, so there is always a way back to
+// the unmodified polish without opening Settings.
+function cycleProfile() {
+  const profiles = runtimeSettings.dictationProfiles || [];
+  if (!profiles.length) return null;
+  const order = ["", ...profiles.map((p) => p.id)];
+  const index = order.indexOf(runtimeSettings.activeProfileId || "");
+  return selectProfile(order[(index + 1) % order.length]);
+}
+
+function registerProfileShortcuts() {
+  for (const profile of runtimeSettings.dictationProfiles || []) {
+    if (!profile.hotkey) continue;
+    try {
+      const ok = globalShortcut.register(profile.hotkey, () => selectProfile(profile.id));
+      if (!ok) logger.warn(`[Profile] Hotkey unavailable for "${profile.name}": ${profile.hotkey}`);
+    } catch (error) {
+      logger.warn(`[Profile] Hotkey rejected for "${profile.name}": ${error?.message || error}`);
+    }
+  }
+
+  const cycle = runtimeSettings.profileCycleShortcut;
+  if (cycle) {
+    try {
+      const ok = globalShortcut.register(cycle, () => cycleProfile());
+      if (!ok) logger.warn(`[Profile] Cycle hotkey unavailable: ${cycle}`);
+    } catch (error) {
+      logger.warn(`[Profile] Cycle hotkey rejected: ${error?.message || error}`);
+    }
+  }
 }
 
 function recoverAfterResume(reason = "resume") {
@@ -419,6 +474,8 @@ const consoleService = new ConsoleService({
   dictionaryService,
   wakeWordService,
   openSettings: () => windowManager.showSettingsWindow(),
+  selectProfile: (id) => selectProfile(id),
+  cycleProfile: () => cycleProfile(),
 });
 
 function createAndWireMainWindow() {
@@ -468,6 +525,9 @@ function getRuntimeConfigPayload() {
     autoSubmit: runtimeSettings.autoSubmit,
     autoSubmitShortcut: runtimeSettings.autoSubmitShortcut,
     autoSubmitDelayMs: runtimeSettings.autoSubmitDelayMs,
+    dictationProfiles: runtimeSettings.dictationProfiles || [],
+    activeProfileId: runtimeSettings.activeProfileId || "",
+    profileCycleShortcut: runtimeSettings.profileCycleShortcut || "",
     clipboardRestoreDelayMs: runtimeSettings.clipboardRestoreDelayMs,
     pasteChunkChars: runtimeSettings.pasteChunkChars,
     pasteChunkDelayMs: runtimeSettings.pasteChunkDelayMs,
@@ -749,7 +809,10 @@ ipcMain.handle("process-command", async (_event, payload) => {
 });
 
 ipcMain.handle("polish-dictation", async (_event, payload) => {
-  return textProcessingService.polishDictation(payload || {});
+  return textProcessingService.polishDictation({
+    ...(payload || {}),
+    profile: activeProfile(),
+  });
 });
 
 ipcMain.handle("request-microphone-access", async () => {

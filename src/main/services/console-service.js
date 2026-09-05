@@ -16,9 +16,13 @@ class ConsoleService {
     wakeWordService,
     openSettings,
     resetSettings,
+    selectProfile,
+    cycleProfile,
   }) {
     this.runtimeSettings = runtimeSettings;
     this.applySettings = applySettings;
+    this.selectProfile = typeof selectProfile === "function" ? selectProfile : () => null;
+    this.cycleProfile = typeof cycleProfile === "function" ? cycleProfile : () => null;
     this.setupShortcut = setupShortcut;
     this.diagnostics = diagnostics;
     this.logger = logger;
@@ -131,6 +135,7 @@ class ConsoleService {
     if (cmd === "quit" || cmd === "exit") return this._cmdQuit();
     if (cmd === "perf") return this._cmdPerf();
     if (cmd === "settings") return this._cmdSettings();
+    if (cmd === "profile" || cmd === "profiles") return this._cmdProfile(parts.slice(1));
     if (cmd === "reset" && parts[1]?.toLowerCase() === "settings") return this._cmdResetSettings();
     if (cmd === "devices") return this._cmdDevices();
     if (cmd === "set") return this._cmdSet(parts.slice(1));
@@ -175,6 +180,9 @@ class ConsoleService {
       kv("devices", "List audio inputs"),
       kv("perf", "Performance stats"),
       kv("settings", "Open settings window"),
+      kv("profile [list]", "Show dictation profiles"),
+      kv("profile use <name>", "Switch dictation profile"),
+      kv("profile next", "Cycle to the next profile"),
       kv("reset settings", "Reset saved settings to .env/defaults"),
       kv("last [n]", "Show last N transcriptions (default 1)"),
       kv("copy-last", "Copy latest saved transcript to clipboard"),
@@ -221,6 +229,50 @@ class ConsoleService {
       kv("Wake Phrase", this.runtimeSettings.wakePhraseEnabled ? "on (Hey Whisper)" : "off"),
       "",
     ];
+    this._sendLine(lines.join("\n"));
+  }
+
+  _cmdProfile(args) {
+    const profiles = this.runtimeSettings.dictationProfiles || [];
+    const sub = String(args[0] || "").toLowerCase();
+
+    if (sub === "next" || sub === "cycle") {
+      const profile = this.cycleProfile();
+      this._sendLine(`  Profile -> ${profile ? profile.name : "Standard polish"}`);
+      return;
+    }
+
+    if (sub === "use" || sub === "set") {
+      const wanted = args.slice(1).join(" ").trim();
+      if (!wanted || ["standard", "default", "off", "none"].includes(wanted.toLowerCase())) {
+        this.selectProfile("");
+        this._sendLine("  Profile -> Standard polish");
+        return;
+      }
+      const match = profiles.find(
+        (p) => p.name.toLowerCase() === wanted.toLowerCase() || p.id === wanted
+      );
+      if (!match) {
+        this._sendLine(`  No profile named "${wanted}". Use: profile list`);
+        return;
+      }
+      this.selectProfile(match.id);
+      this._sendLine(`  Profile -> ${match.name}`);
+      return;
+    }
+
+    if (!profiles.length) {
+      this._sendLine("  No dictation profiles yet. Add them in Settings.");
+      return;
+    }
+    const activeId = this.runtimeSettings.activeProfileId || "";
+    const lines = ["", `  ${activeId ? " " : "*"} Standard polish`];
+    for (const profile of profiles) {
+      const marker = profile.id === activeId ? "*" : " ";
+      const hotkey = profile.hotkey ? `  [${profile.hotkey}]` : "";
+      lines.push(`  ${marker} ${profile.name}${hotkey}`);
+    }
+    lines.push("");
     this._sendLine(lines.join("\n"));
   }
 

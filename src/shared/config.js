@@ -45,6 +45,7 @@ function loadConfig(env = process.env) {
       autoSubmit: env.APP_AUTO_SUBMIT || "off",
       autoSubmitShortcut: env.APP_AUTO_SUBMIT_SHORTCUT || "Enter",
       autoSubmitDelayMs: toMs(env.APP_AUTO_SUBMIT_DELAY_MS, 120),
+      profileCycleShortcut: env.APP_PROFILE_CYCLE_SHORTCUT || "",
       clipboardRestoreDelayMs: toMs(env.APP_CLIPBOARD_RESTORE_DELAY_MS, 120),
       pasteChunkChars: toInt(env.APP_PASTE_CHUNK_CHARS, 1500),
       pasteChunkDelayMs: toMs(env.APP_PASTE_CHUNK_DELAY_MS, 80),

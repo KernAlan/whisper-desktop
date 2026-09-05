@@ -33,7 +33,7 @@ Whisper Desktop is currently an open-source tool for people who are comfortable 
 ## P3: Product Reach
 
 - **Provider abstraction:** allow additional cloud or local transcription engines without leaking provider choices throughout the UI and pipeline.
-- **Personalization:** learn corrections, vocabulary, and formatting preferences locally and per application.
+- **Personalization:** learn corrections, vocabulary, and formatting preferences locally and per application. Dictation profiles cover the manual half of this: named post-processing prompts, switchable by hotkey. What is still missing is anything automatic -- profiles do not select themselves per application.
 - **Cross-device input:** evaluate mobile only after desktop insertion is consistently reliable and low latency.
 
 ## Completed Foundation Milestone

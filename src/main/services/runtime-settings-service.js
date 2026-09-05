@@ -1,5 +1,46 @@
 const fs = require("fs-extra");
 const { isSupportedAccelerator } = require("./keystroke-format");
+const { randomUUID } = require("node:crypto");
+
+const MAX_PROFILES = 20;
+const MAX_PROFILE_NAME = 60;
+const MAX_PROFILE_PROMPT = 2000;
+
+/**
+ * Normalises the saved profile list. Profiles come from the settings window and
+ * from a JSON file a user can edit, so every field is bounded here rather than
+ * trusted: the prompt goes into an LLM request and the hotkey into a global
+ * shortcut registration.
+ */
+function sanitizeProfiles(value) {
+  if (!Array.isArray(value)) return null;
+  const seenIds = new Set();
+  const profiles = [];
+
+  for (const entry of value.slice(0, MAX_PROFILES)) {
+    if (!entry || typeof entry !== "object") continue;
+    const name = String(entry.name || "").replace(/\s+/g, " ").trim().slice(0, MAX_PROFILE_NAME);
+    const prompt = String(entry.prompt || "").trim().slice(0, MAX_PROFILE_PROMPT);
+    // A profile with no prompt has nothing to do, and one with no name cannot be
+    // picked out of a list.
+    if (!name || !prompt) continue;
+
+    let id = String(entry.id || "").trim().slice(0, 64);
+    if (!id || seenIds.has(id)) id = randomUUID();
+    seenIds.add(id);
+
+    const hotkey = String(entry.hotkey || "").trim();
+    profiles.push({
+      id,
+      name,
+      prompt,
+      hotkey: hotkey && isSupportedAccelerator(hotkey) ? hotkey : "",
+    });
+  }
+  return profiles;
+}
+
+
 
 const MUTABLE_KEYS = [
   "shortcut",
@@ -20,6 +61,9 @@ const MUTABLE_KEYS = [
   "autoSubmit",
   "autoSubmitShortcut",
   "autoSubmitDelayMs",
+  "dictationProfiles",
+  "activeProfileId",
+  "profileCycleShortcut",
   "clipboardRestoreDelayMs",
   "pasteChunkChars",
   "pasteChunkDelayMs",
@@ -59,6 +103,9 @@ function createRuntimeDefaults(config) {
     autoSubmit: config.app.autoSubmit,
     autoSubmitShortcut: config.app.autoSubmitShortcut,
     autoSubmitDelayMs: config.app.autoSubmitDelayMs,
+    dictationProfiles: [],
+    activeProfileId: "",
+    profileCycleShortcut: config.app.profileCycleShortcut,
     clipboardRestoreDelayMs: config.app.clipboardRestoreDelayMs,
     pasteChunkChars: config.app.pasteChunkChars,
     pasteChunkDelayMs: config.app.pasteChunkDelayMs,
@@ -154,6 +201,23 @@ function applyRuntimeSettings(current, payload = {}) {
     next.outputMode = payload.outputMode;
   }
 
+  const profiles = sanitizeProfiles(payload.dictationProfiles);
+  if (profiles) next.dictationProfiles = profiles;
+
+  if (typeof payload.activeProfileId === "string") {
+    // Selecting a profile that is not in the list would silently polish with the
+    // default rules, so an unknown id falls back to the standard prompt.
+    const available = next.dictationProfiles || [];
+    const wanted = payload.activeProfileId.trim();
+    next.activeProfileId = available.some((p) => p.id === wanted) ? wanted : "";
+  }
+
+  if (typeof payload.profileCycleShortcut === "string") {
+    const cycle = payload.profileCycleShortcut.trim();
+    if (!cycle || cycle.toLowerCase() === "off") next.profileCycleShortcut = "";
+    else if (isSupportedAccelerator(cycle)) next.profileCycleShortcut = cycle;
+  }
+
   if (["off", "enter", "ctrl-enter", "custom"].includes(payload.autoSubmit)) {
     next.autoSubmit = payload.autoSubmit;
   }
@@ -239,6 +303,7 @@ class RuntimeSettingsService {
 }
 
 module.exports = {
+  sanitizeProfiles,
   RuntimeSettingsService,
   createRuntimeDefaults,
   applyRuntimeSettings,

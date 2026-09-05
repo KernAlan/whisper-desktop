@@ -15,6 +15,7 @@ const fields = [
   "pasteShortcut",
   "autoSubmitShortcut",
   "autoSubmitDelayMs",
+  "profileCycleShortcut",
 ];
 
 const MIC_TEST_DURATION_MS = 5000;
@@ -26,6 +27,8 @@ let dictationMode = "polished";
 let outputMode = "paste";
 let clipboardRestoreMode = "deferred";
 let autoSubmit = "off";
+let profiles = [];
+let activeProfileId = "";
 let suggestions = [];
 let micTestRunning = false;
 let resetArmed = false;
@@ -99,6 +102,71 @@ function setAutoSubmit(value) {
   if (row) row.hidden = autoSubmit !== "custom";
 }
 
+function renderProfiles() {
+  const list = byId("profileList");
+  if (!list) return;
+  list.textContent = "";
+
+  const rows = [{ id: "", name: "Standard polish", prompt: "Punctuation only, every word kept", hotkey: "" }, ...profiles];
+  for (const profile of rows) {
+    const row = document.createElement("div");
+    row.className = `profile-row${profile.id === activeProfileId ? " active" : ""}`;
+
+    const use = document.createElement("button");
+    use.type = "button";
+    use.textContent = profile.id === activeProfileId ? "In use" : "Use";
+    use.disabled = profile.id === activeProfileId;
+    use.addEventListener("click", () => {
+      activeProfileId = profile.id;
+      renderProfiles();
+      autosave({ activeProfileId }, `Profile: ${profile.name}`);
+    });
+
+    const label = document.createElement("div");
+    const title = document.createElement("div");
+    title.textContent = profile.name;
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = profile.hotkey ? `${profile.prompt}  ·  ${profile.hotkey}` : profile.prompt;
+    label.append(title, meta);
+
+    row.append(use, label);
+
+    if (profile.id) {
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.textContent = "Remove";
+      remove.addEventListener("click", () => {
+        profiles = profiles.filter((p) => p.id !== profile.id);
+        if (activeProfileId === profile.id) activeProfileId = "";
+        renderProfiles();
+        autosave({ dictationProfiles: profiles, activeProfileId }, `Removed ${profile.name}`);
+      });
+      row.append(remove);
+    } else {
+      // Keeps the three-column grid aligned for the built-in row.
+      row.append(document.createElement("span"));
+    }
+
+    list.append(row);
+  }
+}
+
+async function addProfile() {
+  const name = byId("profileName").value.trim();
+  const prompt = byId("profilePrompt").value.trim();
+  const hotkey = byId("profileHotkey").value.trim();
+  if (!name || !prompt) {
+    showToast("A profile needs a name and instructions", "error");
+    return;
+  }
+  profiles = [...profiles, { name, prompt, hotkey }];
+  byId("profileName").value = "";
+  byId("profilePrompt").value = "";
+  byId("profileHotkey").value = "";
+  await autosave({ dictationProfiles: profiles }, `Added ${name}`);
+}
+
 function numberValue(id) {
   const value = Number(byId(id).value);
   return Number.isFinite(value) ? value : undefined;
@@ -139,6 +207,9 @@ function renderConfig(nextConfig) {
   setOutputMode(config.outputMode);
   setClipboardRestoreMode(config.clipboardRestoreMode);
   setAutoSubmit(config.autoSubmit);
+  profiles = Array.isArray(config.dictationProfiles) ? config.dictationProfiles : [];
+  activeProfileId = config.activeProfileId || "";
+  renderProfiles();
   renderCredentialStatus(config.credential);
   renderTerms(config.dictionaryTerms || []);
   updateDirtyState();
@@ -308,6 +379,7 @@ async function save() {
     pasteShortcut: byId("pasteShortcut").value.trim(),
     autoSubmitShortcut: byId("autoSubmitShortcut").value.trim(),
     autoSubmitDelayMs: numberValue("autoSubmitDelayMs"),
+    profileCycleShortcut: byId("profileCycleShortcut").value.trim(),
   };
 
   try {
@@ -553,6 +625,7 @@ window.addEventListener("focus", () => {
 byId("save").addEventListener("click", save);
 byId("reload").addEventListener("click", discardChanges);
 byId("reset").addEventListener("click", resetSettings);
+byId("addProfile").addEventListener("click", addProfile);
 byId("addTerm").addEventListener("click", addTerm);
 byId("suggestTerms").addEventListener("click", suggestTerms);
 byId("addSuggestions").addEventListener("click", addSuggestions);

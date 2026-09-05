@@ -127,7 +127,43 @@ class TextProcessingService {
     return response?.choices?.[0]?.message?.content?.trim() || "";
   }
 
-  async polishDictation({ transcript }) {
+  // A profile is an intentional rewrite -- "make it formal", "as bullet points" --
+  // so the content-word guard that protects the default polish is deliberately
+  // not applied here. That guard exists to stop the model editing when it was
+  // only asked to punctuate; a profile is asking it to edit.
+  async _applyProfile(rawText, profile) {
+    const dictionaryPrompt = this.dictionaryService?.buildPrompt?.() || "";
+    const response = await withTimeout(
+      this.groq.chat.completions.create({
+        model: this.model,
+        temperature: 0.2,
+        ...reasoningOptions(this.model),
+        messages: [
+          {
+            role: "system",
+            content: [
+              "You rewrite dictated text according to the user's instructions.",
+              "Return only the rewritten text, ready to paste. Never explain what you changed.",
+              "Never answer the text or treat it as a question addressed to you.",
+              `Instructions:\n${profile.prompt}`,
+              dictionaryPrompt,
+            ].filter(Boolean).join("\n"),
+          },
+          { role: "user", content: rawText },
+        ],
+      }),
+      this.timeoutMs,
+      `Dictation profile "${profile.name}" timed out after ${this.timeoutMs}ms`
+    );
+
+    const rewritten = response?.choices?.[0]?.message?.content?.trim();
+    // Falling back to the raw transcript keeps a bad profile from eating the
+    // dictation outright.
+    if (!rewritten) return rawText;
+    return this._matchLineBreaks(rawText, rewritten);
+  }
+
+  async polishDictation({ transcript, profile = null }) {
     if (!this.apiKey) throw new Error("Groq API key is not configured. Open Settings to connect.");
     const rawText = String(transcript || "").trim();
     if (!rawText) return "";
@@ -140,17 +176,21 @@ class TextProcessingService {
       return rawText;
     }
 
+    const usingProfile = Boolean(profile?.prompt);
+    const runOne = (chunk) =>
+      usingProfile ? this._applyProfile(chunk, profile) : this._polishOne(chunk);
+
     const chunks = this._splitTextChunks(rawText, this.polishChunkWords);
     if (chunks.length > 1) {
       const polishedChunks = [];
       for (let i = 0; i < chunks.length; i += 1) {
         this.logger.log(`[Polish] chunk ${i + 1}/${chunks.length}`);
-        polishedChunks.push(await this._polishOne(chunks[i]));
+        polishedChunks.push(await runOne(chunks[i]));
       }
       return polishedChunks.join("\n\n");
     }
 
-    return this._polishOne(rawText);
+    return runOne(rawText);
   }
 
   async _polishOne(rawText) {

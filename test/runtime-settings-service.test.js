@@ -202,3 +202,73 @@ test("a dictation mode patch does not disturb the hotkeys", () => {
   assert.equal(after.shortcut, "CommandOrControl+Shift+Space");
   assert.equal(after.commandShortcut, before.commandShortcut);
 });
+
+// --- Dictation profiles -----------------------------------------------------
+
+test("profiles are normalised and bounded", () => {
+  const { sanitizeProfiles } = require("../src/main/services/runtime-settings-service");
+  const profiles = sanitizeProfiles([
+    { id: "a", name: "  Formal   email ", prompt: " Make it formal. ", hotkey: "CommandOrControl+1" },
+    { name: "No id", prompt: "Bullet points" },
+    { name: "Dropped", prompt: "" },
+    { name: "", prompt: "also dropped" },
+    { name: "Bad hotkey", prompt: "x", hotkey: "Nonsense+Q" },
+  ]);
+
+  assert.equal(profiles.length, 3);
+  assert.equal(profiles[0].name, "Formal email");
+  assert.equal(profiles[0].prompt, "Make it formal.");
+  assert.equal(profiles[0].hotkey, "CommandOrControl+1");
+  // A generated id, because one was not supplied.
+  assert.ok(profiles[1].id);
+  // An unusable hotkey is dropped rather than registered as something wrong.
+  assert.equal(profiles[2].hotkey, "");
+});
+
+test("duplicate profile ids are replaced so selection stays unambiguous", () => {
+  const { sanitizeProfiles } = require("../src/main/services/runtime-settings-service");
+  const profiles = sanitizeProfiles([
+    { id: "same", name: "One", prompt: "a" },
+    { id: "same", name: "Two", prompt: "b" },
+  ]);
+  assert.equal(profiles.length, 2);
+  assert.notEqual(profiles[0].id, profiles[1].id);
+});
+
+test("long profile fields are truncated and the list is capped", () => {
+  const { sanitizeProfiles } = require("../src/main/services/runtime-settings-service");
+  const [profile] = sanitizeProfiles([{ name: "n".repeat(200), prompt: "p".repeat(5000) }]);
+  assert.equal(profile.name.length, 60);
+  assert.equal(profile.prompt.length, 2000);
+
+  const many = sanitizeProfiles(
+    Array.from({ length: 50 }, (_, i) => ({ name: `p${i}`, prompt: "x" }))
+  );
+  assert.equal(many.length, 20);
+});
+
+test("selecting a profile that does not exist falls back to the standard polish", () => {
+  const next = applyRuntimeSettings(defaults(), {
+    dictationProfiles: [{ id: "keep", name: "Keep", prompt: "x" }],
+    activeProfileId: "gone",
+  });
+  // Otherwise it would silently polish with the default rules while the UI
+  // claimed a profile was active.
+  assert.equal(next.activeProfileId, "");
+
+  const chosen = applyRuntimeSettings(defaults(), {
+    dictationProfiles: [{ id: "keep", name: "Keep", prompt: "x" }],
+    activeProfileId: "keep",
+  });
+  assert.equal(chosen.activeProfileId, "keep");
+});
+
+test("the cycle shortcut can be cleared and rejects unusable keystrokes", () => {
+  const base = { ...defaults(), profileCycleShortcut: "CommandOrControl+Alt+P" };
+  assert.equal(applyRuntimeSettings(base, { profileCycleShortcut: "off" }).profileCycleShortcut, "");
+  assert.equal(applyRuntimeSettings(base, { profileCycleShortcut: "" }).profileCycleShortcut, "");
+  assert.equal(
+    applyRuntimeSettings(base, { profileCycleShortcut: "Nonsense+Q" }).profileCycleShortcut,
+    "CommandOrControl+Alt+P"
+  );
+});

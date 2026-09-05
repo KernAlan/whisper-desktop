@@ -6,23 +6,83 @@ const {
   toSendKeys,
   toAppleScript,
   toXdotool,
-  escapeSendKeysText,
   escapeAppleScriptText,
   escapePowerShellSingleQuoted,
 } = require("./keystroke-format");
 
 const execFileAsync = promisify(execFile);
 
-// The same declarations as WINDOWS_NATIVE_TYPE, on one line. PowerShell reads the
-// worker's stdin a statement at a time, so the type has to be a single-quoted
-// one-liner rather than a here-string. C# does not care about the line breaks.
-const WINDOWS_NATIVE_TYPE_INLINE =
-  "using System; using System.Runtime.InteropServices; " +
-  "public static class WhisperDesktopTarget { " +
-  '[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); ' +
-  '[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId); ' +
-  '[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd); ' +
-  '[DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int command); }';
+// PowerShell reads the worker's stdin a statement at a time, so the type has to
+// reach it as a single-quoted one-liner rather than a here-string. C# does not
+// care about the line breaks, so the one-liner is collapsed from the readable
+// source below rather than maintained as a second copy that can drift from it.
+//
+// Nothing in that C# may contain a single quote, or it would close the
+// PowerShell literal it is embedded in. That is why the character comparisons
+// below are numeric (13, 10) instead of the more obvious char literals.
+const collapseToOneLine = (source) => source.replace(/\s*\n\s*/g, " ").trim();
+
+
+// After this many consecutive worker failures the service stops trying and uses
+// the one-shot path, so a broken worker costs one timeout rather than one per paste.
+const MAX_WORKER_FAILURES = 3;
+
+// SendInput with KEYEVENTF_UNICODE is what makes typed output exact: the scan
+// code carries the UTF-16 unit itself, so accented letters, em dashes, emoji and
+// anything else arrive as themselves. SendKeys, the obvious alternative, has to
+// be told about its own metacharacters and still mangles anything outside the
+// current keyboard layout.
+//
+// The union has to be laid out in full even though only the keyboard arm is
+// used: SendInput checks cbSize against the real INPUT size, and a keyboard-only
+// struct is 32 bytes against the 40 it expects on x64, which fails silently.
+const WINDOWS_NATIVE_TYPE = `
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+public static class WhisperDesktopTarget {
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int command);
+  [DllImport("user32.dll", SetLastError = true)] public static extern uint SendInput(uint count, INPUT[] inputs, int size);
+  [StructLayout(LayoutKind.Sequential)] public struct MOUSEINPUT { public int dx; public int dy; public uint mouseData; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
+  [StructLayout(LayoutKind.Sequential)] public struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
+  [StructLayout(LayoutKind.Sequential)] public struct HARDWAREINPUT { public uint uMsg; public ushort wParamL; public ushort wParamH; }
+  [StructLayout(LayoutKind.Explicit)] public struct INPUTUNION { [FieldOffset(0)] public MOUSEINPUT mi; [FieldOffset(0)] public KEYBDINPUT ki; [FieldOffset(0)] public HARDWAREINPUT hi; }
+  [StructLayout(LayoutKind.Sequential)] public struct INPUT { public uint type; public INPUTUNION u; }
+  const uint INPUT_KEYBOARD = 1;
+  const uint KEYEVENTF_KEYUP = 0x0002;
+  const uint KEYEVENTF_UNICODE = 0x0004;
+  const ushort VK_RETURN = 0x0D;
+  static INPUT Key(ushort vk, ushort scan, uint flags) {
+    INPUT input = new INPUT();
+    input.type = INPUT_KEYBOARD;
+    input.u.ki.wVk = vk;
+    input.u.ki.wScan = scan;
+    input.u.ki.dwFlags = flags;
+    return input;
+  }
+  public static uint SendUnicodeText(string text) {
+    List<INPUT> inputs = new List<INPUT>();
+    foreach (char c in text) {
+      if (c == 13) continue;
+      if (c == 10) {
+        inputs.Add(Key(VK_RETURN, 0, 0));
+        inputs.Add(Key(VK_RETURN, 0, KEYEVENTF_KEYUP));
+      } else {
+        inputs.Add(Key(0, (ushort)c, KEYEVENTF_UNICODE));
+        inputs.Add(Key(0, (ushort)c, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP));
+      }
+    }
+    if (inputs.Count == 0) return 0;
+    INPUT[] batch = inputs.ToArray();
+    return SendInput((uint)batch.Length, batch, Marshal.SizeOf(typeof(INPUT)));
+  }
+}
+`;
+
+const WINDOWS_NATIVE_TYPE_INLINE = collapseToOneLine(WINDOWS_NATIVE_TYPE);
 
 // Compiled once per worker, then every capture and paste is a one-line call.
 // The WScript.Shell COM object is built once here too; creating it per paste cost
@@ -32,23 +92,12 @@ const WINDOWS_WORKER_INIT = [
   `Add-Type -TypeDefinition '${WINDOWS_NATIVE_TYPE_INLINE}'`,
   "$WDShell = New-Object -ComObject WScript.Shell",
   "function Invoke-WDShortcut { param($Target,$ProcId,$Keys,$Id) try { $t = [IntPtr]::new([int64]$Target); if ([WhisperDesktopTarget]::GetForegroundWindow() -ne $t) { [WhisperDesktopTarget]::ShowWindowAsync($t, 9) | Out-Null; if (-not [WhisperDesktopTarget]::SetForegroundWindow($t)) { $WDShell.AppActivate([int]$ProcId) | Out-Null }; Start-Sleep -Milliseconds 60 }; if ([WhisperDesktopTarget]::GetForegroundWindow() -ne $t) { throw 'target-window-not-foreground' }; $WDShell.SendKeys($Keys); Write-Output \"@@WD $Id OK\" } catch { Write-Output \"@@WD $Id ERR $($_.Exception.Message -replace '\s+', ' ')\" } }",
+  // Dictated text arrives base64-encoded. It is the only encoding that cannot
+  // carry a quote, a newline or a PowerShell metacharacter into this command
+  // line, and the worker protocol is line-based, so a raw newline would desync it.
+  "function Invoke-WDType { param($Target,$ProcId,$B64,$Id) try { $t = [IntPtr]::new([int64]$Target); if ([WhisperDesktopTarget]::GetForegroundWindow() -ne $t) { [WhisperDesktopTarget]::ShowWindowAsync($t, 9) | Out-Null; if (-not [WhisperDesktopTarget]::SetForegroundWindow($t)) { $WDShell.AppActivate([int]$ProcId) | Out-Null }; Start-Sleep -Milliseconds 60 }; if ([WhisperDesktopTarget]::GetForegroundWindow() -ne $t) { throw 'target-window-not-foreground' }; $text = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($B64)); $sent = [WhisperDesktopTarget]::SendUnicodeText($text); if ($sent -eq 0 -and $text.Length -gt 0) { throw 'send-input-rejected' }; Write-Output \"@@WD $Id OK\" } catch { Write-Output \"@@WD $Id ERR $($_.Exception.Message -replace '\s+', ' ')\" } }",
   "function Invoke-WDCapture { param($Id) try { $w = [WhisperDesktopTarget]::GetForegroundWindow(); if ($w -eq [IntPtr]::Zero) { throw 'no-foreground-window' }; $procId = [uint32]0; [WhisperDesktopTarget]::GetWindowThreadProcessId($w, [ref]$procId) | Out-Null; $p = Get-Process -Id $procId; $json = [pscustomobject]@{ windowId = $w.ToInt64().ToString(); processId = [int]$procId; appName = $p.ProcessName } | ConvertTo-Json -Compress; Write-Output \"@@WD $Id OK $json\" } catch { Write-Output \"@@WD $Id ERR $($_.Exception.Message -replace '\s+', ' ')\" } }",
 ].join(String.fromCharCode(10));
-
-// After this many consecutive worker failures the service stops trying and uses
-// the one-shot path, so a broken worker costs one timeout rather than one per paste.
-const MAX_WORKER_FAILURES = 3;
-
-const WINDOWS_NATIVE_TYPE = `
-using System;
-using System.Runtime.InteropServices;
-public static class WhisperDesktopTarget {
-  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
-  [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int command);
-}
-`;
 
 const WINDOWS_CAPTURE_SCRIPT = `
 Add-Type -TypeDefinition @'
@@ -218,7 +267,7 @@ class TargetContextService {
       throw new Error("The original target application is unavailable. Text was kept on the clipboard.");
     }
     if (this.platform === "win32") {
-      return this._sendWindowsKeys(context, escapeSendKeysText(value));
+      return this._sendWindowsText(context, value);
     }
     if (this.platform === "darwin") {
       return this._sendMacClause(context, `keystroke "${escapeAppleScriptText(value)}"`);
@@ -289,12 +338,51 @@ class TargetContextService {
     return this._sendWindowsKeys(context, keys);
   }
 
+  // Typed text goes through SendInput rather than SendKeys, so what the user
+  // dictated is what lands: no metacharacters to escape, and characters outside
+  // the current keyboard layout survive.
+  async _sendWindowsText(context, text) {
+    if (!context.windowId) throw new Error("The original target window cannot be restored.");
+    const encoded = Buffer.from(String(text), "utf8").toString("base64");
+    const viaWorker = await this._runOnWorker(
+      `Invoke-WDType -Target ${context.windowId} -ProcId ${context.processId || 0} -B64 ${encoded}`
+    );
+    if (viaWorker) {
+      if (!viaWorker.ok) throw viaWorker.error;
+      return;
+    }
+
+    const script = `
+Add-Type -TypeDefinition @'
+${WINDOWS_NATIVE_TYPE}
+'@
+$target = [IntPtr]::new([int64]${context.windowId})
+if ([WhisperDesktopTarget]::GetForegroundWindow() -ne $target) {
+  [WhisperDesktopTarget]::ShowWindowAsync($target, 9) | Out-Null
+  if (-not [WhisperDesktopTarget]::SetForegroundWindow($target)) {
+    $shell = New-Object -ComObject WScript.Shell
+    $shell.AppActivate(${context.processId || 0}) | Out-Null
+  }
+  Start-Sleep -Milliseconds 60
+}
+if ([WhisperDesktopTarget]::GetForegroundWindow() -ne $target) { exit 3 }
+$text = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${encoded}'))
+[WhisperDesktopTarget]::SendUnicodeText($text) | Out-Null
+`;
+    await this.execFileAsync("powershell.exe", [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      script,
+    ]);
+  }
+
   async _sendWindowsKeys(context, keys) {
     if (!context.windowId) throw new Error("The original target window cannot be restored.");
     // windowId and processId are digits-only out of sanitizeTargetContext. `keys`
     // can be dictated text, so it is escaped for the single-quoted PowerShell
-    // literal it lands in -- and escapeSendKeysText has already turned any
-    // newline into {ENTER}, which the worker's line-based protocol depends on.
+    // literal it lands in. Only encoded accelerators reach here now; dictated
+    // text goes through _sendWindowsText and never touches SendKeys.
     const safeKeys = escapePowerShellSingleQuoted(keys);
     const viaWorker = await this._runOnWorker(
       `Invoke-WDShortcut -Target ${context.windowId} -ProcId ${context.processId || 0} -Keys '${safeKeys}'`
@@ -413,6 +501,8 @@ end tell`;
 
 module.exports = {
   WINDOWS_WORKER_INIT,
+  WINDOWS_NATIVE_TYPE,
+  WINDOWS_NATIVE_TYPE_INLINE,
   MAC_CAPTURE_SCRIPT,
   WINDOWS_CAPTURE_SCRIPT,
   TargetContextService,

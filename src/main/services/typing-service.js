@@ -3,10 +3,10 @@ const {
   toSendKeys,
   toAppleScript,
   toXdotool,
-  escapeSendKeysText,
   escapeAppleScriptText,
   escapePowerShellSingleQuoted,
 } = require("./keystroke-format");
+const { WINDOWS_NATIVE_TYPE_INLINE } = require("./target-context-service");
 const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
 const execFileAsync = promisify(execFile);
@@ -334,12 +334,19 @@ class TypingService {
         `tell application "System Events" to keystroke "${escapeAppleScriptText(text)}"`,
       ]);
     } else if (this.platform === "win32") {
-      const keys = escapePowerShellSingleQuoted(escapeSendKeysText(text));
+      // Same SendInput path as the worker takes, so typing fidelity does not
+      // depend on whether a target window was captured. Base64 keeps dictated
+      // text out of the command line as syntax.
+      const encoded = Buffer.from(String(text), "utf8").toString("base64");
       await this.execFileAsync("powershell.exe", [
         "-NoProfile",
         "-NonInteractive",
         "-Command",
-        `$ws = New-Object -ComObject WScript.Shell; $ws.SendKeys('${keys}')`,
+        [
+          `Add-Type -TypeDefinition '${WINDOWS_NATIVE_TYPE_INLINE}'`,
+          `$text = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${encoded}'))`,
+          "[WhisperDesktopTarget]::SendUnicodeText($text) | Out-Null",
+        ].join("; "),
       ]);
     } else {
       try {

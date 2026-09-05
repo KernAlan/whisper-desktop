@@ -88,7 +88,13 @@ function setOutputMode(value) {
 function setClipboardRestoreMode(value) {
   clipboardRestoreMode = ["deferred", "blocking", "off"].includes(value) ? value : "deferred";
   document.querySelectorAll("#clipboardRestoreMode button").forEach((button) => {
-    button.classList.toggle("active", button.dataset.clipboard === clipboardRestoreMode);
+    // "Never touch it" is not a restore mode -- it is Type output. It shows as
+    // the active choice whenever nothing is going near the clipboard.
+    const isUntouched = button.dataset.clipboard === "untouched";
+    const active = isUntouched
+      ? outputMode === "type"
+      : outputMode !== "type" && button.dataset.clipboard === clipboardRestoreMode;
+    button.classList.toggle("active", active);
   });
 }
 
@@ -587,14 +593,29 @@ document.querySelectorAll("#outputMode button").forEach((button) => {
   button.addEventListener("click", () => {
     if (button.dataset.output === outputMode) return;
     setOutputMode(button.dataset.output);
+    setClipboardRestoreMode(clipboardRestoreMode);
     autosave({ outputMode }, `Output set to ${outputMode === "clipboard" ? "clipboard only" : outputMode}`);
   });
 });
 
 document.querySelectorAll("#clipboardRestoreMode button").forEach((button) => {
   button.addEventListener("click", () => {
-    if (button.dataset.clipboard === clipboardRestoreMode) return;
+    if (button.dataset.clipboard === "untouched") {
+      if (outputMode === "type") return;
+      setOutputMode("type");
+      setClipboardRestoreMode(clipboardRestoreMode);
+      autosave({ outputMode }, "Output set to type, so the clipboard is never used");
+      return;
+    }
+    // Coming back from "never touch it" has to undo the output switch too, or
+    // the clipboard choice would have no effect.
+    const leavingUntouched = outputMode === "type";
     setClipboardRestoreMode(button.dataset.clipboard);
+    if (leavingUntouched) {
+      setOutputMode("paste");
+      autosave({ clipboardRestoreMode, outputMode }, "Output set back to paste");
+      return;
+    }
     autosave({ clipboardRestoreMode }, "Clipboard behaviour saved");
   });
 });

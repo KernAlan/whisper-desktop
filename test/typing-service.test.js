@@ -338,3 +338,56 @@ test("setAutoSubmitConfig rejects values it does not understand", () => {
   assert.equal(typing.autoSubmitShortcut, "Enter");
   assert.equal(typing.autoSubmitDelayMs, 120);
 });
+
+// --- Windows typing goes through SendInput ----------------------------------
+
+// Dictated text is arbitrary. Base64 is what guarantees a quote, a newline or a
+// PowerShell metacharacter in it can never reach the command line as syntax --
+// and the worker protocol is line-based, so a raw newline would desync it.
+test("typed text reaches the Windows worker base64-encoded, never as raw text", async () => {
+  const commands = [];
+  const { TargetContextService } = require("../src/main/services/target-context-service");
+  const service = new TargetContextService({
+    platform: "win32",
+    logger: { warn() {}, log() {} },
+    powerShellWorker: {
+      isAvailable: () => true,
+      run: async (command) => {
+        commands.push(command);
+        return { ok: true, payload: "" };
+      },
+    },
+  });
+
+  const nasty = "it's a test'; Stop-Process -Force; '\nsecond line";
+  await service.sendText({ available: true, windowId: "12345", processId: "678" }, nasty);
+
+  assert.equal(commands.length, 1);
+  const command = commands[0];
+  assert.match(command, /^Invoke-WDType -Target 12345 -ProcId 678 -B64 /);
+  // Nothing recognisable from the text survives into the command line.
+  assert.ok(!command.includes("Stop-Process"), "raw text leaked into the command");
+  assert.ok(!command.includes("'"), "a quote reached the command line");
+  assert.ok(!command.includes("\n"), "a newline would desync the worker protocol");
+  // ...and it round-trips.
+  const encoded = command.split(" -B64 ")[1];
+  assert.equal(Buffer.from(encoded, "base64").toString("utf8"), nasty);
+});
+
+test("the SendInput declarations are shell-safe and compile as one line", () => {
+  const {
+    WINDOWS_NATIVE_TYPE,
+    WINDOWS_NATIVE_TYPE_INLINE,
+  } = require("../src/main/services/target-context-service");
+
+  // The inline copy is derived, not maintained separately, so it cannot drift.
+  assert.equal(WINDOWS_NATIVE_TYPE_INLINE, WINDOWS_NATIVE_TYPE.replace(/\s*\n\s*/g, " ").trim());
+  // It is embedded in a single-quoted PowerShell literal and sent as one line.
+  assert.ok(!WINDOWS_NATIVE_TYPE_INLINE.includes("'"), "a quote would close the literal");
+  assert.ok(!WINDOWS_NATIVE_TYPE_INLINE.includes("\n"), "a newline would split the statement");
+  assert.match(WINDOWS_NATIVE_TYPE_INLINE, /SendUnicodeText/);
+  // Marshal.SizeOf must see the full union: a keyboard-only INPUT is 32 bytes
+  // against the 40 SendInput expects on x64, and it fails silently.
+  assert.match(WINDOWS_NATIVE_TYPE_INLINE, /MOUSEINPUT/);
+  assert.match(WINDOWS_NATIVE_TYPE_INLINE, /HARDWAREINPUT/);
+});

@@ -215,6 +215,33 @@ async function load() {
   }
 }
 
+// Start-on-login is OS state, not part of the saved settings payload, so it
+// applies on the spot and stays out of the dirty/save flow entirely.
+async function loadOpenAtLogin() {
+  const section = byId("startupSection");
+  if (!section) return;
+  try {
+    const { supported, openAtLogin } = await window.electronAPI.getOpenAtLogin();
+    section.hidden = !supported;
+    byId("openAtLogin").checked = Boolean(openAtLogin);
+  } catch (error) {
+    section.hidden = true;
+  }
+}
+
+async function toggleOpenAtLogin(event) {
+  const requested = event.target.checked === true;
+  try {
+    const { openAtLogin } = await window.electronAPI.setOpenAtLogin(requested);
+    // Show what actually stuck, not what was clicked.
+    event.target.checked = Boolean(openAtLogin);
+    showToast(openAtLogin ? "Starting on login" : "Not starting on login");
+  } catch (error) {
+    showToast(error.message || "Could not change the startup setting", "error");
+    await loadOpenAtLogin();
+  }
+}
+
 async function save() {
   const payload = {
     shortcut: byId("shortcut").value.trim(),
@@ -434,6 +461,13 @@ fields.forEach((field) => {
 });
 byId("wakePhraseEnabled").addEventListener("change", updateDirtyState);
 
+byId("openAtLogin").addEventListener("change", toggleOpenAtLogin);
+// The same setting is in the tray menu, so re-read it whenever this window
+// comes forward rather than showing a value that changed behind our back.
+window.addEventListener("focus", () => {
+  loadOpenAtLogin();
+});
+
 byId("save").addEventListener("click", save);
 byId("reload").addEventListener("click", discardChanges);
 byId("reset").addEventListener("click", resetSettings);
@@ -459,3 +493,4 @@ window.addEventListener("keydown", (event) => {
 });
 
 load();
+loadOpenAtLogin();

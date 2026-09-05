@@ -37,6 +37,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getRuntimeConfig: () => ipcRenderer.invoke("get-runtime-config"),
   updateRuntimeSettings: (settings) => ipcRenderer.invoke("update-runtime-settings", settings),
   resetRuntimeSettings: () => ipcRenderer.invoke("reset-runtime-settings"),
+  getOpenAtLogin: () => ipcRenderer.invoke("get-open-at-login"),
+  setOpenAtLogin: (openAtLogin) => ipcRenderer.invoke("set-open-at-login", openAtLogin),
   saveApiKey: (apiKey) => ipcRenderer.invoke("save-api-key", apiKey),
   clearApiKey: () => ipcRenderer.invoke("clear-api-key"),
   onRuntimeConfigUpdated: (callback) => {

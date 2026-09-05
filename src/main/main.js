@@ -780,6 +780,23 @@ ipcMain.handle("reset-runtime-settings", async () => {
   return broadcastRuntimeConfig();
 });
 
+// Start-on-login lives in the OS, not in the settings file, so it is read back
+// from there rather than mirrored. Both handlers go through the tray controller
+// so the tray checkbox and the settings toggle cannot drift apart: writing
+// through it refreshes the tray menu as a side effect.
+ipcMain.handle("get-open-at-login", async () => ({
+  supported: trayController.supportsOpenAtLogin(),
+  openAtLogin: trayController.getOpenAtLogin(),
+}));
+
+ipcMain.handle("set-open-at-login", async (_event, openAtLogin) => {
+  trayController.setOpenAtLogin(openAtLogin === true);
+  return {
+    supported: trayController.supportsOpenAtLogin(),
+    openAtLogin: trayController.getOpenAtLogin(),
+  };
+});
+
 ipcMain.handle("save-api-key", async (_event, apiKey) => {
   const savedApiKey = credentialService.saveApiKey(apiKey);
   setActiveApiKey(savedApiKey, "secure storage");

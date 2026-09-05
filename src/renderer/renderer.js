@@ -429,7 +429,7 @@ async function boot() {
     },
     onClosePhrase: async () => {
       if (controller?.getState() === STATES.RECORDING) {
-        await controller.stopRecording();
+        await controller.stopRecording({ closePhrase: true });
       }
     },
     onStatus: (status) => {

@@ -456,3 +456,57 @@ test("RecorderController still hands focus back when no polish runs", async () =
 
   assert.deepEqual(order, ["hide", "paste"]);
 });
+
+test("RecorderController drops the close phrase before polishing or pasting", async () => {
+  const { RecorderController } = await import("../src/renderer/core/recorder-controller.js");
+  const polished = [];
+  let pastedText = "";
+
+  const controller = new RecorderController(createControllerDeps({
+    focusRestoreDelayMs: 1,
+    transcribeAudio: async () => "Take all the items home. Stop whisper.",
+    polishDictation: async ({ transcript }) => {
+      polished.push(transcript);
+      return transcript;
+    },
+    simulateTyping: async (text) => {
+      pastedText = text;
+      return { ok: true };
+    },
+  }));
+
+  await controller.handleRecordingStop([new Blob([new Uint8Array(2000)])]);
+
+  // The phrase must be gone before the polish sees it: asking the model to
+  // punctuate "Stop whisper." is how it came back as "Stop, whisper."
+  assert.deepEqual(polished, ["Take all the items home."]);
+  assert.equal(pastedText, "Take all the items home.");
+});
+
+test("RecorderController trims a clipped close phrase only when the detector stopped it", async () => {
+  const { RecorderController, STATES } = await import("../src/renderer/core/recorder-controller.js");
+
+  async function pasteAfterStop({ closePhrase }) {
+    let pastedText = "";
+    const controller = new RecorderController(createControllerDeps({
+      focusRestoreDelayMs: 1,
+      minRecordingDurationMs: 0,
+      // The detector cut the recording mid-phrase, so this is all that came back.
+      transcribeAudio: async () => "Take all the items home. Stop.",
+      simulateTyping: async (text) => {
+        pastedText = text;
+        return { ok: true };
+      },
+    }));
+    controller.setDictationMode("fast");
+    controller.stateMachine.transition(STATES.RECORDING, "test");
+    controller.recordingStartedAt = Date.now();
+    controller.stopRecording(closePhrase ? { closePhrase: true } : undefined);
+    await controller.handleRecordingStop([new Blob([new Uint8Array(2000)])]);
+    return pastedText;
+  }
+
+  assert.equal(await pasteAfterStop({ closePhrase: true }), "Take all the items home.");
+  // The hotkey tells us nothing about what was said, so "Stop." stays.
+  assert.equal(await pasteAfterStop({ closePhrase: false }), "Take all the items home. Stop.");
+});

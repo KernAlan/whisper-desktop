@@ -20,7 +20,7 @@ Whisper Desktop is currently an open-source tool for people who are comfortable 
 
 - **Streaming transcription:** implemented as one early confidence preview plus persisted, silence-aware checkpoints for long sessions. Short dictations still use one final request.
 - **Tail-latency control:** timeouts and provider failures must degrade to a useful draft quickly; a rare 10-second stall damages trust more than small median improvements help it.
-- **Optional wake phrase:** implemented as an opt-in local `Hey Whisper` detector with endpointing, no ambient cloud upload, no ambient disk writes, and the global shortcut retained as the dependable baseline. The remaining refinement is a short in-memory pre-roll if dogfooding shows first-word loss.
+- **Optional wake phrase:** implemented as an opt-in local `Hey Whisper` detector with endpointing, no ambient cloud upload, no ambient disk writes, and the global shortcut retained as the dependable baseline. The remaining refinements are a short in-memory pre-roll if dogfooding shows first-word loss, and deriving the transcript cleanup from the configured phrases rather than the hardcoded "Hey Whisper" / "Stop Whisper" spellings, once the phrases become user-settable.
 - **Application compatibility:** maintain a tested matrix for terminals, browsers, Electron apps, native editors, remote desktops, and applications that reject clipboard paste.
 
 ## P2: Voice Editing

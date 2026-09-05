@@ -1,5 +1,6 @@
 import { RecorderStateMachine, STATES } from "./recorder-state-machine.js";
 import { formatError, microphoneStatusForError, userMessageForFailure } from "./error-utils.js";
+import { stripWakePhrases } from "./wake-phrase-text.js";
 
 const CHUNK_SIZE_LIMIT = 20 * 1024 * 1024; // 20MB
 const PREVIEW_SIZE_LIMIT = 2 * 1024 * 1024; // Preview is UX only; keep long recordings for final transcription.
@@ -95,6 +96,7 @@ export class RecorderController {
     this.wakeSpeechStartedAt = 0;
     this.wakeLastSpeechAt = 0;
     this.wakeDiscardRequested = false;
+    this.closePhraseStop = false;
     this.wakeInitialTimeoutMs = wakeInitialTimeoutMs;
     this.segmentMinMs = segmentMinMs;
     this.segmentMaxMs = segmentMaxMs;
@@ -189,6 +191,7 @@ export class RecorderController {
       this.wakeSpeechStartedAt = 0;
       this.wakeLastSpeechAt = 0;
       this.wakeDiscardRequested = false;
+      this.closePhraseStop = false;
       this.mode = mode === "command" ? "command" : "dictation";
       if (dictationMode) this.setDictationMode(dictationMode);
       this.selection = selection && typeof selection === "object"
@@ -243,6 +246,7 @@ export class RecorderController {
       this.wakeSpeechStartedAt = 0;
       this.wakeLastSpeechAt = 0;
       this.wakeDiscardRequested = false;
+      this.closePhraseStop = false;
       console.error(`Error starting recording: ${formatError(error)}`);
       const status = microphoneStatusForError(error);
       this.updatePreview(userMessageForFailure(error, status), {
@@ -316,9 +320,12 @@ export class RecorderController {
     return this.stopRecording();
   }
 
-  stopRecording() {
+  stopRecording({ closePhrase = false } = {}) {
     if (this.getState() !== STATES.RECORDING || this.recordingStopRequested) return false;
     this.recordingStopRequested = true;
+    // Remembered for the transcript cleanup: the detector fired, so whatever
+    // trails the transcript is its mangled spelling of "Stop Whisper".
+    this.closePhraseStop = Boolean(closePhrase);
     this.stopPreviewLoop();
     this.stopSegmentMonitor();
     this.stopRecordingStatusLoop();
@@ -380,6 +387,7 @@ export class RecorderController {
       this.wakeSpeechStartedAt = 0;
       this.wakeLastSpeechAt = 0;
       this.wakeDiscardRequested = false;
+      this.closePhraseStop = false;
       this.stopSegmentMonitor();
       this.stopPreviewLoop();
       this.stopRecordingStatusLoop();
@@ -716,6 +724,11 @@ export class RecorderController {
       if (stopIfCancelled()) return;
       transcribeMs = Date.now() - transcribeStartedAt;
       this.stopProcessingStatusLoop();
+      // The recording runs through "Stop Whisper", so the phrase that ended the
+      // dictation is in the transcript. Drop it before anything sees the text:
+      // stripping here keeps polished and fast dictation identical, and a
+      // transcript that was nothing but the phrase falls into the empty branch.
+      transcript = stripWakePhrases(transcript, { closePhraseStop: this.closePhraseStop });
 
       if (!transcript || typeof transcript !== "string" || !transcript.trim()) {
         keepWindowVisible = true;
@@ -853,6 +866,7 @@ export class RecorderController {
       this.wakeSpeechStartedAt = 0;
       this.wakeLastSpeechAt = 0;
       this.wakeDiscardRequested = false;
+      this.closePhraseStop = false;
       this.stopSegmentMonitor();
       this.stopPreviewLoop();
       this.stopRecordingStatusLoop();
@@ -931,8 +945,10 @@ export class RecorderController {
     this.startProcessingStatusLoop("Retrying saved audio");
 
     try {
-      const transcript = this._readTranscriptionResult(
-        await this.retryRecovery(this.lastRecovery.target, { removeOnSuccess: false })
+      const transcript = stripWakePhrases(
+        this._readTranscriptionResult(
+          await this.retryRecovery(this.lastRecovery.target, { removeOnSuccess: false })
+        )
       );
       if (stopIfCancelled()) return false;
       this.stopProcessingStatusLoop();
@@ -1457,7 +1473,7 @@ export class RecorderController {
       this.lastOutputText,
     ];
     for (const candidate of candidates) {
-      const text = typeof candidate === "string" ? candidate.trim() : "";
+      const text = stripWakePhrases(candidate);
       if (text) return text;
     }
     return "";
